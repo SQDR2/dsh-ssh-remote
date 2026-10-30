@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "SSH 管理",
+    "description": "管理 SSH 主机，从 ~/.ssh/config 导入并测试连接。"
+  }
+}

@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "SSH hosts",
+    "description": "Manage SSH hosts, import them from ~/.ssh/config, and test connections."
+  }
+}
