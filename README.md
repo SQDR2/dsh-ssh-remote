@@ -17,9 +17,18 @@
 - 连接检查通过 `ctx.subprocess` 以 argv 数组启动 `ssh`，不经过 shell；密码/口令通过一个权限为 `0700` 的临时 askpass 脚本和子进程环境变量传给 `ssh`。
 - 首次连接使用 `StrictHostKeyChecking=accept-new`（TOFU），之后沿用 `known_hosts` 校验。
 
+## 安装
+
+包名 `@local/dsh-ssh-hosts`，本身就是一个 DSH bundle（`cordis.patch.yml` 会注册 `ssh-hosts` 条目）。
+
+- **本地开发**：在 profile 的 `package.json` 依赖里写成 `"@local/dsh-ssh-hosts": "link:/path/to/dsh-ssh-remote"`，并在 `dsh.profile.bundles` 中列出。
+- **从 GitHub 安装**：在 Web 的「插件」页安装或用 `plugin_manager` 工具 `install_bundle`，spec 为
+  `https://github.com/SQDR2/dsh-ssh-remote.git`（也可用 `git+https://github.com/SQDR2/dsh-ssh-remote.git`）。
+  如果所在网络无法直连 GitHub，可先在本地克隆再用 `link:` 方式。
+
 ## 使用
 
-安装后刷新 Web 页面，在左侧面板列表的「自动化任务」下方点「SSH 管理」。或者直接在插件管理页看到 `SSH hosts` 条目。
+启用后刷新 Web 页面，在左侧面板列表的「自动化任务」下方点「SSH 管理」。或者直接在插件管理页看到 `SSH hosts` 条目。
 
 ## 当前范围
 
