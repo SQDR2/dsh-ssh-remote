@@ -13,12 +13,14 @@ window.__ModuleLoader__.load({
       en: {
         'menu.label': 'SSH hosts',
         title: 'SSH hosts',
-        subtitle: 'Manage SSH hosts for remote development and operations. Connect runs a quick reachability check.',
+        subtitle: 'Manage SSH hosts for remote development and operations. Connect opens a session that stays open until you disconnect.',
         'action.add': 'Add host',
         'action.browse': 'Folders',
         'action.import': 'Import from ~/.ssh/config',
         'action.connect': 'Connect',
         'action.connecting': 'Connecting…',
+        'action.disconnect': 'Disconnect',
+        'action.disconnecting': 'Disconnecting…',
         'action.edit': 'Edit',
         'action.delete': 'Delete',
         'action.cancel': 'Cancel',
@@ -38,6 +40,7 @@ window.__ModuleLoader__.load({
         'list.emptyBody': 'Add a host or import one from ~/.ssh/config.',
         'list.connectFailed': 'Could not connect to {name}. Check the network and SSH configuration.',
         'list.timeout': 'Connecting to {name} timed out.',
+        'list.sessionLost': 'The session to {name} was lost.',
         'list.sshMissing': 'The ssh command is not available on this machine.',
         'list.alias': '~/.ssh/config',
         'notice.added': 'Host added.',
@@ -131,12 +134,14 @@ window.__ModuleLoader__.load({
       zh: {
         'menu.label': 'SSH 管理',
         title: '远程 SSH 主机',
-        subtitle: '管理用于远程开发与运维的 SSH 主机；「连接」会执行一次 SSH 连通性检查。',
+        subtitle: '管理用于远程开发与运维的 SSH 主机；「连接」会建立一个常驻的 SSH 会话，直到你点「断开」。',
         'action.add': '添加主机',
         'action.browse': '文件夹',
         'action.import': '从 ~/.ssh/config 导入',
         'action.connect': '连接',
         'action.connecting': '连接中…',
+        'action.disconnect': '断开',
+        'action.disconnecting': '断开中…',
         'action.edit': '编辑',
         'action.delete': '删除',
         'action.cancel': '取消',
@@ -156,6 +161,7 @@ window.__ModuleLoader__.load({
         'list.emptyBody': '添加一台主机，或从 ~/.ssh/config 导入。',
         'list.connectFailed': '无法连接到 {name}，请检查网络和 SSH 配置。',
         'list.timeout': '连接 {name} 超时。',
+        'list.sessionLost': '与 {name} 的会话已断开。',
         'list.sshMissing': '本机找不到 ssh 命令。',
         'list.alias': '~/.ssh/config',
         'notice.added': '主机已添加。',
@@ -612,6 +618,28 @@ window.__ModuleLoader__.load({
     const runtimeStatus = new Map()
 
     /**
+     * Reconcile a remembered outcome with the Host's live-session truth. The
+     * Host is authoritative, so a session that died while this panel was
+     * closed cannot keep showing as connected.
+     * @param {object} host - listed host row.
+     * @returns {{phase: string, code?: string, error?: string}} the status to show.
+     */
+    function statusFor(host) {
+      const remembered = runtimeStatus.get(host.id)
+      if (host.connected === true) {
+        const status = remembered?.phase === 'connected' ? remembered : { phase: 'connected' }
+        runtimeStatus.set(host.id, status)
+        return status
+      }
+      if (remembered !== undefined && (remembered.phase === 'connected' || remembered.phase === 'testing')) {
+        const status = { phase: 'disconnected', code: 'dropped' }
+        runtimeStatus.set(host.id, status)
+        return status
+      }
+      return remembered ?? { phase: 'unknown' }
+    }
+
+    /**
      * Build one API URL; document-relative so a mounted app keeps working.
      * @param {string} name - route suffix.
      * @returns {string} URL.
@@ -648,7 +676,9 @@ window.__ModuleLoader__.load({
       list: () => request('list'),
       save: host => request('save', { method: 'POST', body: JSON.stringify(host) }),
       remove: id => request('remove', { method: 'POST', body: JSON.stringify({ id }) }),
-      test: id => request('test', { method: 'POST', body: JSON.stringify({ id }) }),
+      connect: id => request('connect', { method: 'POST', body: JSON.stringify({ id }) }),
+      disconnect: id => request('disconnect', { method: 'POST', body: JSON.stringify({ id }) }),
+      sessions: () => request('sessions'),
       tree: (id, path) => request('tree', { method: 'POST', body: JSON.stringify({ id, path }) }),
       readFile: (id, path) => request('read', { method: 'POST', body: JSON.stringify({ id, path }) }),
       writeFile: payload => request('write', { method: 'POST', body: JSON.stringify(payload) }),
@@ -1318,18 +1348,25 @@ window.__ModuleLoader__.load({
 
     /**
      * One list row.
-     * @param {{host: object, t: Function, busy: boolean, active: boolean, onConnect: Function, onBrowse: Function, onEdit: Function, onDelete: Function}} props - row props.
+     * @param {{host: object, t: Function, busy: boolean, connected: boolean, active: boolean, onConnect: Function, onDisconnect: Function, onBrowse: Function, onEdit: Function, onDelete: Function}} props - row props.
      * @returns {object} React element.
      */
-    function HostRow({ host, t, busy, active, onConnect, onBrowse, onEdit, onDelete }) {
+    function HostRow({ host, t, busy, connected, active, onConnect, onDisconnect, onBrowse, onEdit, onDelete }) {
       const status = host.status ?? { phase: 'unknown' }
       const phase = status.phase ?? 'unknown'
       const target = typeof host.host === 'string' && host.host.trim() !== '' ? targetText(host) : t('list.alias')
-      const failure = phase === 'disconnected'
+      // A disconnect the user asked for is not a failure: only a real one has a
+      // code or a diagnostic to explain.
+      const failed = status.code !== undefined || status.error !== undefined
+      const failure = phase === 'disconnected' && failed
         ? status.code === 'ssh-missing' ? t('list.sshMissing')
           : status.code === 'timeout' ? t('list.timeout', { name: host.name })
-            : t('list.connectFailed', { name: host.name })
+            : status.code === 'dropped' ? t('list.sessionLost', { name: host.name })
+              : t('list.connectFailed', { name: host.name })
         : ''
+      const toggleLabel = connected
+        ? (busy ? t('action.disconnecting') : t('action.disconnect'))
+        : (busy ? t('action.connecting') : t('action.connect'))
       return h('div', { className: 'dsh-ssh-hosts-row', role: 'listitem' },
         h('div', { className: 'dsh-ssh-hosts-rowMain' },
           h('div', { className: 'dsh-ssh-hosts-rowTitle' },
@@ -1342,10 +1379,13 @@ window.__ModuleLoader__.load({
         h('div', { className: 'dsh-ssh-hosts-rowActions' },
           h('button', {
             type: 'button',
-            className: 'dsh-ssh-hosts-btn dsh-ssh-hosts-btn--primary dsh-ssh-hosts-btn--small',
+            className: connected
+              ? 'dsh-ssh-hosts-btn dsh-ssh-hosts-btn--outline dsh-ssh-hosts-btn--small'
+              : 'dsh-ssh-hosts-btn dsh-ssh-hosts-btn--primary dsh-ssh-hosts-btn--small',
             disabled: busy,
-            onClick: () => onConnect(host),
-          }, busy ? t('action.connecting') : t('action.connect')),
+            'aria-label': `${toggleLabel}: ${host.name}`,
+            onClick: () => (connected ? onDisconnect(host) : onConnect(host)),
+          }, toggleLabel),
           h('button', {
             type: 'button',
             className: 'dsh-ssh-hosts-icon-btn',
@@ -1627,7 +1667,7 @@ window.__ModuleLoader__.load({
           const data = await api.list()
           const rows = (Array.isArray(data.hosts) ? data.hosts : []).map(host => ({
             ...host,
-            status: runtimeStatus.get(host.id) ?? { phase: 'unknown' },
+            status: statusFor(host),
           }))
           setHosts(rows)
           setLoadError('')
@@ -1640,6 +1680,27 @@ window.__ModuleLoader__.load({
 
       React.useEffect(() => { void load() }, [load])
 
+      // A held session can die while this page is open; refresh its truth when
+      // the window regains focus, without polling in the background.
+      React.useEffect(() => {
+        if (typeof window === 'undefined' || typeof window.addEventListener !== 'function') return undefined
+        const sync = () => {
+          void api.sessions().then(data => {
+            const live = new Set(Array.isArray(data?.connected) ? data.connected : [])
+            setHosts(current => current.map(host => {
+              const status = host.status ?? { phase: 'unknown' }
+              if (live.has(host.id)) {
+                return status.phase === 'connected' ? host : { ...host, status: { phase: 'connected' } }
+              }
+              if (status.phase !== 'connected') return host
+              return { ...host, status: { phase: 'disconnected', code: 'dropped' } }
+            }))
+          }).catch(() => {})
+        }
+        window.addEventListener('focus', sync)
+        return () => window.removeEventListener('focus', sync)
+      }, [])
+
       const updateStatus = (id, status) => {
         runtimeStatus.set(id, status)
         setHosts(current => current.map(host => host.id === id ? { ...host, status } : host))
@@ -1650,14 +1711,33 @@ window.__ModuleLoader__.load({
         setBusy(current => ({ ...current, [host.id]: true }))
         updateStatus(host.id, { phase: 'testing' })
         try {
-          const result = await api.test(host.id)
-          updateStatus(host.id, { phase: result.status, code: result.code, error: result.error })
+          const result = await api.connect(host.id)
+          if (result?.connected === true) updateStatus(host.id, { phase: 'connected' })
+          else updateStatus(host.id, { phase: 'disconnected', code: result?.code, error: result?.error })
         } catch (error) {
           updateStatus(host.id, {
             phase: 'disconnected',
             code: error?.code,
             error: error instanceof Error ? error.message : String(error),
           })
+        } finally {
+          setBusy(current => {
+            const next = { ...current }
+            delete next[host.id]
+            return next
+          })
+        }
+      }
+
+      const disconnect = async host => {
+        if (busy[host.id] === true) return
+        setBusy(current => ({ ...current, [host.id]: true }))
+        try {
+          await api.disconnect(host.id)
+          updateStatus(host.id, { phase: 'disconnected' })
+        } catch (error) {
+          // The session may still be alive, so leave the state as it was.
+          setNotice({ tone: 'error', text: error instanceof Error ? error.message : String(error) })
         } finally {
           setBusy(current => {
             const next = { ...current }
@@ -1713,7 +1793,9 @@ window.__ModuleLoader__.load({
           if (form.passphrase !== '') payload.passphrase = form.passphrase
           const result = await api.save(payload)
           const created = editing === null
-          const saved = { ...result.host, status: runtimeStatus.get(result.host.id) ?? { phase: 'unknown' } }
+          // Saving closes the held session, so the outcome it produced is stale.
+          if (!created) runtimeStatus.delete(result.host.id)
+          const saved = { ...result.host, status: statusFor(result.host) }
           setHosts(current => {
             const index = current.findIndex(host => host.id === saved.id)
             if (index < 0) return [...current, saved]
@@ -1881,8 +1963,10 @@ window.__ModuleLoader__.load({
                   host,
                   t,
                   busy: busy[host.id] === true,
+                  connected: (host.status?.phase ?? 'unknown') === 'connected',
                   active: host.id === browsingId,
                   onConnect: connect,
+                  onDisconnect: disconnect,
                   onBrowse: item => setBrowsingId(current => current === item.id ? null : item.id),
                   onEdit: openEdit,
                   onDelete: setDeleting,

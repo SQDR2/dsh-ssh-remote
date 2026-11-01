@@ -151,6 +151,8 @@ function findAll(root, predicate) {
 // ---------------------------------------------------------------- module load
 
 let exported = null
+/** Window listeners the panel registers, so focus refreshes can be fired. */
+const windowListeners = new Map()
 globalThis.window = {
   __ModuleLoader__: {
     load(config) {
@@ -160,6 +162,19 @@ globalThis.window = {
       })
     },
   },
+  addEventListener(name, handler) {
+    const set = windowListeners.get(name) ?? new Set()
+    set.add(handler)
+    windowListeners.set(name, set)
+  },
+  removeEventListener(name, handler) {
+    windowListeners.get(name)?.delete(handler)
+  },
+}
+
+/** Deliver one window event to every registered handler. */
+function fireWindowEvent(name) {
+  for (const handler of [...(windowListeners.get(name) ?? [])]) handler()
 }
 globalThis.document = {
   createElement: () => ({ dataset: {}, textContent: '', remove() {} }),
@@ -188,6 +203,10 @@ const files = {
 /** Failure overrides for the file routes. */
 let readFailure = null
 let writeFailure = null
+/** Session ids the fake Host reports as connected. */
+let connectedIds = []
+/** Canned failure for the next connect or disconnect call. */
+let connectFailure = null
 
 const requests = []
 const goodFetch = async (url, options) => {
@@ -198,9 +217,18 @@ const goodFetch = async (url, options) => {
       hosts: [{
         id: 'h1', name: 'zlw-azure', host: '40.89.131.159', port: 2222, user: 'zlw',
         defaultWorkspace: '', useSshConfig: false, hasPassword: false, hasPassphrase: false,
+        connected: false,
       }],
     })
   }
+  if (name === 'connect' || name === 'disconnect') {
+    const failure = connectFailure
+    connectFailure = null
+    if (failure !== null) return Response.json(failure.body, { status: failure.status })
+    connectedIds = name === 'connect' ? ['h1'] : []
+    return Response.json({ connected: name === 'connect' })
+  }
+  if (name === 'sessions') return Response.json({ connected: connectedIds })
   if (name === 'tree') {
     const key = requests[requests.length - 1].body.path
     const payload = trees[key]
@@ -260,6 +288,74 @@ await settleTree()
 const rendered = collect(tree)
 const rowText = rendered.filter(node => typeof node === 'string')
 if (!rowText.includes('zlw-azure')) throw new Error(`host row missing: ${rowText.join('|')}`)
+
+// ---------------------------------------------------------------- connect / disconnect
+
+/** The row's connect-or-disconnect button. */
+const toggleButton = () => findAll(tree, node => node.type === 'button')
+  .find(node => String(node.props['aria-label'] ?? '').startsWith('action.connect')
+    || String(node.props['aria-label'] ?? '').startsWith('action.disconnect'))
+if (toggleButton() === undefined) throw new Error('each row needs a connect button')
+if (toggleButton().props['aria-label'] !== 'action.connect: zlw-azure') {
+  throw new Error(`an unconnected row must offer connect, got ${toggleButton().props['aria-label']}`)
+}
+
+toggleButton().props.onClick()
+await settleTree()
+
+const connectRequest = requests.filter(entry => entry.name === 'connect').at(-1)
+if (connectRequest === undefined) throw new Error('clicking connect must call the connect route')
+if (connectRequest.body.id !== 'h1') throw new Error('connecting must name the host')
+
+if (toggleButton().props['aria-label'] !== 'action.disconnect: zlw-azure') {
+  throw new Error(`a connected row must offer disconnect, got ${toggleButton().props['aria-label']}`)
+}
+if (toggleButton().props.className.includes('--primary')) {
+  throw new Error('the disconnect action must not keep the primary connect styling')
+}
+if (!collect(tree).filter(node => typeof node === 'string').includes('status.connected')) {
+  throw new Error('a connected row must show the connected badge')
+}
+
+toggleButton().props.onClick()
+await settleTree()
+
+if (requests.filter(entry => entry.name === 'disconnect').length !== 1) {
+  throw new Error('clicking disconnect must call the disconnect route')
+}
+if (toggleButton().props['aria-label'] !== 'action.connect: zlw-azure') {
+  throw new Error(`a disconnected row must offer connect again, got ${toggleButton().props['aria-label']}`)
+}
+// Asking to disconnect is not a failure, so the row must not complain about it.
+if (findAll(tree, node => String(node.props.className).includes('dsh-ssh-hosts-rowError')).length !== 0) {
+  throw new Error('a deliberate disconnect must not show a connection error')
+}
+
+// A rejected login must fall back to connect and explain itself.
+connectFailure = { status: 200, body: { connected: false, code: 'failed', error: 'Permission denied (publickey)' } }
+toggleButton().props.onClick()
+await settleTree()
+if (toggleButton().props['aria-label'] !== 'action.connect: zlw-azure') {
+  throw new Error('a failed connect must leave the connect action in place')
+}
+const failedText = collect(tree).filter(node => typeof node === 'string').join('|')
+if (!failedText.includes('list.connectFailed')) throw new Error(`a failed connect must be explained: ${failedText}`)
+
+// A Host that reports no live session must not keep showing as connected.
+connectedIds = []
+toggleButton().props.onClick()
+await settleTree()
+if (toggleButton().props['aria-label'] !== 'action.disconnect: zlw-azure') {
+  throw new Error('the row must be connected before the dropped-session check')
+}
+connectedIds = []
+fireWindowEvent('focus')
+await settleTree()
+if (toggleButton().props['aria-label'] !== 'action.connect: zlw-azure') {
+  throw new Error('a dropped session must return the row to connect')
+}
+const lostText = collect(tree).filter(node => typeof node === 'string').join('|')
+if (!lostText.includes('list.sessionLost')) throw new Error(`a lost session must be explained: ${lostText}`)
 
 // ---------------------------------------------------------------- open folders
 

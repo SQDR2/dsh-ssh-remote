@@ -1,9 +1,9 @@
 {
   "name": "@local/dsh-ssh-hosts",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "private": true,
   "type": "module",
-  "description": "Manage SSH hosts, import them from ~/.ssh/config, and test connections.",
+  "description": "Manage SSH hosts, import them from ~/.ssh/config, and hold a connection you can disconnect.",
   "exports": {
     ".": "./index.js",
     "./client": "./client.js",

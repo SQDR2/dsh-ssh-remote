@@ -14,8 +14,18 @@ import path from 'node:path'
 const API_PREFIX = '/api/ssh-hosts'
 /** Current on-disk record format. */
 const DATA_VERSION = 1
-/** Hard ceiling for one connectivity check. */
+/** Hard ceiling for one bounded remote command. */
 const TEST_TIMEOUT_MS = 20_000
+/** Marker the persistent session prints once authentication has succeeded. */
+export const SESSION_READY_MARKER = '__dsh-ssh-ready__'
+/** Remote keep-alive command: announces readiness, then blocks until the client ends it. */
+export const SESSION_COMMAND = `printf '%s\\n' '${SESSION_READY_MARKER}'; cat > /dev/null`
+/** How long one connect may take before it is abandoned. */
+const SESSION_READY_TIMEOUT_MS = 20_000
+/** Poll interval while waiting for the readiness marker. */
+const SESSION_POLL_MS = 50
+/** How long a disconnect waits for the client to exit before reporting success anyway. */
+const SESSION_EXIT_TIMEOUT_MS = 3_000
 /** Per-stream captured output ceiling. */
 const MAX_OUTPUT_BYTES = 64 * 1024
 /** Largest text file the editor will open. */
@@ -311,14 +321,17 @@ function publicHost(host, secrets) {
 }
 
 /**
- * List every host with secret-presence flags.
+ * List every host with secret-presence flags and its live-session state.
  * @param {import('@deepseek-ai/cordis').Context} ctx - plugin context.
  * @returns {Promise<{hosts: object[]}>} the list.
  */
 async function listHosts(ctx) {
   const data = await readData()
   const credentials = ctx.get('credentials')
-  const hosts = await Promise.all(data.hosts.map(async host => publicHost(host, await readSecrets(credentials, host.id))))
+  const hosts = await Promise.all(data.hosts.map(async host => ({
+    ...publicHost(host, await readSecrets(credentials, host.id)),
+    connected: liveSessions.has(host.id),
+  })))
   return { hosts }
 }
 
@@ -361,6 +374,8 @@ async function saveHost(ctx, input) {
     else data.hosts[data.hosts.indexOf(existing)] = host
     return host
   })
+  // Connection parameters may have changed; a held session would keep the old ones.
+  closeSession(saved.id)
   return { host: publicHost(saved, await readSecrets(credentials, saved.id)) }
 }
 
@@ -377,6 +392,7 @@ async function removeHost(ctx, id) {
     if (index < 0) throw new HttpError(404, 'host/not-found', 'That host no longer exists.')
     data.hosts.splice(index, 1)
   })
+  closeSession(id)
   const credentials = ctx.get('credentials')
   if (credentials !== undefined) {
     await credentials.deleteRecord(credentialKey(id)).catch(error => {
@@ -729,7 +745,7 @@ export function parentPath(value) {
  * Build one bounded OpenSSH invocation for a remote command.
  * @param {object} host - host row.
  * @param {{password?: string, passphrase?: string}} secrets - stored secrets.
- * @param {{sshPath: string, askpassPath?: string, home?: string, env?: NodeJS.ProcessEnv, remoteCommand?: string}} settings - local facts and the remote command (`true` when omitted).
+ * @param {{sshPath: string, askpassPath?: string, home?: string, env?: NodeJS.ProcessEnv, remoteCommand?: string, keepalive?: boolean}} settings - local facts, the remote command (`true` when omitted), and whether the connection is held open.
  * @returns {{argv: string[], env: NodeJS.ProcessEnv}} spawn arguments.
  */
 export function buildSshInvocation(host, secrets, settings) {
@@ -741,6 +757,10 @@ export function buildSshInvocation(host, secrets, settings) {
     '-o', 'ConnectTimeout=10',
     '-o', 'StrictHostKeyChecking=accept-new',
   ]
+  // A held session must notice a dead link instead of showing "connected" forever.
+  if (settings.keepalive === true) {
+    argv.push('-o', 'ServerAliveInterval=15', '-o', 'ServerAliveCountMax=3')
+  }
   const hostName = typeof host.host === 'string' ? host.host.trim() : ''
   const user = typeof host.user === 'string' ? host.user.trim() : ''
   const destination = hostName === '' ? host.name : user === '' ? hostName : `${user}@${hostName}`
@@ -896,35 +916,198 @@ async function runSsh(ctx, host, secrets, remoteCommand, signal, options = {}) {
 }
 
 /**
- * Run one bounded connectivity check.
+ * Live SSH sessions, keyed by host id. A session is one held OpenSSH client
+ * whose remote side blocks on stdin, so it stays up until we end it or the
+ * link dies.
+ */
+const liveSessions = new Map()
+/** In-flight connect attempts, so a double click cannot open two sessions. */
+const pendingConnects = new Map()
+
+/**
+ * Wait for one short interval.
+ * @param {number} ms - milliseconds.
+ * @returns {Promise<void>} after the delay.
+ */
+function sleep(ms) {
+  return new Promise(resolve => { setTimeout(resolve, ms) })
+}
+
+/**
+ * Wait until a held session proves it authenticated, or fails.
+ * @param {object} handle - subprocess handle.
+ * @returns {Promise<{ready: boolean, timedOut?: boolean, exit?: {outcome?: object, error?: unknown}}>} readiness.
+ */
+async function waitForSessionReady(handle) {
+  const started = Date.now()
+  let exit = null
+  void handle.done.then(
+    outcome => { exit = { outcome } },
+    error => { exit = { error } },
+  )
+  for (;;) {
+    const { text } = readCollectedDetail(handle.collected.stdout)
+    if (text.includes(SESSION_READY_MARKER)) {
+      // A session that already exited never became usable.
+      return exit === null ? { ready: true } : { ready: false, exit }
+    }
+    if (exit !== null) return { ready: false, exit }
+    if (Date.now() - started >= SESSION_READY_TIMEOUT_MS) return { ready: false, timedOut: true }
+    await sleep(SESSION_POLL_MS)
+  }
+}
+
+/**
+ * Reduce one failed session to the outcome the Client displays.
+ * @param {object} handle - subprocess handle.
+ * @param {{timedOut?: boolean, exit?: {outcome?: object, error?: unknown}}} state - readiness failure.
+ * @returns {{connected: false, code: string, error: string}} failure payload.
+ */
+function sessionFailure(handle, state) {
+  if (state.timedOut === true) {
+    return { connected: false, code: 'timeout', error: 'The connection timed out.' }
+  }
+  const outcome = state.exit?.outcome
+  const detail = summarizeDiagnostics(readCollected(handle.collected.stderr))
+    || summarizeDiagnostics(readCollected(handle.collected.stdout))
+    || (state.exit?.error instanceof Error ? state.exit.error.message : '')
+    || `ssh exited with code ${String(outcome?.exitCode ?? 'unknown')}.`
+  return { connected: false, code: 'failed', error: detail }
+}
+
+/**
+ * Wait for a terminated client to actually exit, without blocking forever.
+ * @param {object} handle - subprocess handle.
+ * @returns {Promise<void>} after exit or the timeout.
+ */
+async function settleExit(handle) {
+  if (typeof handle.waitForExit !== 'function') return
+  let timer
+  try {
+    await Promise.race([
+      Promise.resolve(handle.waitForExit()).catch(() => {}),
+      new Promise(resolve => { timer = setTimeout(resolve, SESSION_EXIT_TIMEOUT_MS) }),
+    ])
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
+/**
+ * End one live session without waiting for its process.
+ * @param {string} id - host identity.
+ * @returns {void}
+ */
+function closeSession(id) {
+  const session = liveSessions.get(id)
+  if (session === undefined) return
+  liveSessions.delete(id)
+  try {
+    session.handle.terminate()
+  } catch {}
+}
+
+/**
+ * Open one held session for a host, or reuse the live one.
  * @param {import('@deepseek-ai/cordis').Context} ctx - plugin context.
  * @param {string} id - host identity.
- * @param {AbortSignal|undefined} signal - caller cancellation.
- * @returns {Promise<{status: 'connected'|'disconnected', code?: string, error?: string, durationMs: number}>} outcome.
+ * @returns {Promise<{connected: boolean, code?: string, error?: string}>} the outcome.
  */
-async function testHost(ctx, id, signal) {
-  const data = await readData()
-  const host = data.hosts.find(candidate => candidate.id === id)
-  if (host === undefined) throw new HttpError(404, 'host/not-found', 'That host no longer exists.')
-  const secrets = await readSecrets(ctx.get('credentials'), host.id)
-  const outcome = await runSsh(ctx, host, secrets, 'true', signal)
-  if (outcome.missing) {
+async function startSession(ctx, id) {
+  if (liveSessions.has(id)) return { connected: true }
+  const host = await findHost(id)
+  const sshPath = await resolveSsh(ctx)
+  if (sshPath === undefined) {
     return {
-      status: 'disconnected',
+      connected: false,
       code: 'ssh-missing',
       error: 'The ssh command is not available to the Harness host.',
-      durationMs: 0,
     }
   }
-  if (outcome.timedOut) {
-    return { status: 'disconnected', code: 'timeout', error: 'The connection timed out.', durationMs: outcome.durationMs }
+  const secrets = await readSecrets(ctx.get('credentials'), host.id)
+  const askpassPath = secrets.password !== undefined || secrets.passphrase !== undefined
+    ? await ensureAskpass()
+    : undefined
+  const { argv, env } = buildSshInvocation(host, secrets, {
+    sshPath,
+    askpassPath,
+    home: homedir(),
+    remoteCommand: SESSION_COMMAND,
+    keepalive: true,
+  })
+  let handle
+  try {
+    handle = ctx.subprocess.spawn({
+      argv,
+      cwd: homedir(),
+      graceMs: 2_000,
+      env,
+      stdio: {
+        // Held open for the life of the session: the remote side blocks on it.
+        stdin: 'pipe',
+        stdout: { maxBytes: MAX_OUTPUT_BYTES },
+        stderr: { maxBytes: MAX_OUTPUT_BYTES },
+      },
+    })
+  } catch (error) {
+    return {
+      connected: false,
+      code: 'failed',
+      error: error instanceof Error ? error.message : String(error),
+    }
   }
-  if (outcome.exitCode === 0) return { status: 'connected', durationMs: outcome.durationMs }
-  const detail = summarizeDiagnostics(outcome.stderr)
-    || summarizeDiagnostics(outcome.stdout)
-    || outcome.failure
-    || `ssh exited with code ${String(outcome.exitCode ?? 'unknown')}.`
-  return { status: 'disconnected', code: 'failed', error: detail, durationMs: outcome.durationMs }
+  const session = { id, handle, startedAt: Date.now() }
+  liveSessions.set(id, session)
+  // A dropped link must not keep showing as connected.
+  const forget = () => { if (liveSessions.get(id) === session) liveSessions.delete(id) }
+  void handle.done.then(forget, forget)
+  const ready = await waitForSessionReady(handle)
+  // A remote that printed the marker and then exited is not a usable session.
+  if (ready.ready === true && liveSessions.get(id) === session) return { connected: true }
+  const failure = ready.ready === true
+    ? { connected: false, code: 'failed', error: 'The session closed as soon as it opened.' }
+    : sessionFailure(handle, ready)
+  liveSessions.delete(id)
+  try {
+    handle.terminate()
+  } catch {}
+  await settleExit(handle)
+  return failure
+}
+
+/**
+ * Open one session, sharing a concurrent attempt for the same host.
+ * @param {import('@deepseek-ai/cordis').Context} ctx - plugin context.
+ * @param {string} id - host identity.
+ * @returns {Promise<{connected: boolean, code?: string, error?: string}>} the outcome.
+ */
+async function connectHost(ctx, id) {
+  const inFlight = pendingConnects.get(id)
+  if (inFlight !== undefined) return await inFlight
+  const attempt = startSession(ctx, id).finally(() => { pendingConnects.delete(id) })
+  pendingConnects.set(id, attempt)
+  return await attempt
+}
+
+/**
+ * End one session. Disconnecting a host that is not connected is a no-op.
+ * @param {string} id - host identity.
+ * @returns {Promise<{connected: false}>} the outcome.
+ */
+async function disconnectHost(id) {
+  const session = liveSessions.get(id)
+  if (session === undefined) return { connected: false }
+  liveSessions.delete(id)
+  try {
+    session.handle.terminate()
+  } catch {}
+  await settleExit(session.handle)
+  return { connected: false }
+}
+
+/** @returns {{connected: string[]}} the hosts that currently hold a session. */
+function sessionState() {
+  return { connected: [...liveSessions.keys()] }
 }
 
 /**
@@ -1275,7 +1458,9 @@ export function apply(ctx) {
     ['list', ['GET'], async () => json(await listHosts(ctx))],
     ['save', ['POST'], async request => json(await saveHost(ctx, await readJson(request)))],
     ['remove', ['POST'], async request => json(await removeHost(ctx, (await readJson(request)).id))],
-    ['test', ['POST'], async request => json(await testHost(ctx, (await readJson(request)).id, request.signal))],
+    ['connect', ['POST'], async request => json(await connectHost(ctx, hostIdOf(await readJson(request))))],
+    ['disconnect', ['POST'], async request => json(await disconnectHost(hostIdOf(await readJson(request))))],
+    ['sessions', ['GET'], async () => json(sessionState())],
     ['tree', ['POST'], async request => json(await browseHost(ctx, await readJson(request), request.signal))],
     ['read', ['POST'], async request => json(await readRemoteFile(ctx, await readJson(request), request.signal))],
     ['write', ['POST'], async request => json(await writeRemoteFile(ctx, await readJson(request), request.signal))],
@@ -1283,6 +1468,10 @@ export function apply(ctx) {
       ? json(await importSelected(ctx, await readJson(request)))
       : json(await importCandidates(ctx))],
   ]
+  // Sessions must not outlive the plugin: they are processes we started.
+  ctx.effect(() => () => {
+    for (const id of [...liveSessions.keys()]) closeSession(id)
+  }, 'ssh-hosts: sessions')
   for (const [name, methods, handler] of routes) {
     ctx.effect(
       () => ctx.connection.fetch.register({

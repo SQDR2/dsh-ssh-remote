@@ -47,6 +47,11 @@ let lastCommand = ''
 let lastDestination = ''
 let lastStdio = null
 
+/** Handles created for held sessions, newest last. */
+const sessionHandles = []
+/** How the next session attempt behaves. */
+let sessionMode = 'ready'
+
 /** @returns {string} hex sha256 of one buffer. */
 const shaOf = bytes => createHash('sha256').update(bytes).digest('hex')
 
@@ -96,6 +101,7 @@ const subprocess = {
     lastCommand = argv[argv.length - 1]
     lastDestination = argv[argv.length - 2]
     lastStdio = options.stdio
+    if (lastCommand === plugin.SESSION_COMMAND) return sessionHandle()
     const reply = emulate(lastCommand)
     return {
       done: Promise.resolve({ exitCode: reply.exitCode ?? 0 }),
@@ -105,6 +111,41 @@ const subprocess = {
       },
     }
   },
+}
+
+/**
+ * Fake held session: `ready` announces the marker, `denied` fails before it,
+ * `silent` never answers so the timeout path can be observed.
+ * @returns {object} a subprocess handle.
+ */
+function sessionHandle() {
+  let settle
+  const done = new Promise(resolve => { settle = resolve })
+  const mode = sessionMode
+  const handle = {
+    terminated: false,
+    stdin: { end() {}, write() { return true } },
+    done,
+    collected: {
+      stdout: {
+        readFrom: () => ({ text: mode === 'ready' ? `${plugin.SESSION_READY_MARKER}\n` : '', lossy: false }),
+      },
+      stderr: {
+        readFrom: () => ({
+          text: mode === 'denied' ? `zlw@40.89.131.159: Permission denied (publickey,password).\n` : '',
+          lossy: false,
+        }),
+      },
+    },
+    terminate() {
+      handle.terminated = true
+      settle({ exitCode: 0, signal: null })
+    },
+    waitForExit: async () => true,
+  }
+  sessionHandles.push(handle)
+  if (mode === 'denied') settle({ exitCode: 255, signal: null })
+  return handle
 }
 
 const routes = new Map()
@@ -118,12 +159,14 @@ const ctx = {
 const plugin = await import('../index.js')
 plugin.apply(ctx)
 assert.deepEqual([...routes.keys()].sort(), [
+  '/api/ssh-hosts.connect',
+  '/api/ssh-hosts.disconnect',
   '/api/ssh-hosts.import',
   '/api/ssh-hosts.list',
   '/api/ssh-hosts.read',
   '/api/ssh-hosts.remove',
   '/api/ssh-hosts.save',
-  '/api/ssh-hosts.test',
+  '/api/ssh-hosts.sessions',
   '/api/ssh-hosts.tree',
   '/api/ssh-hosts.write',
 ])
@@ -147,13 +190,67 @@ assert.equal(listed.status, 200, JSON.stringify(listed.payload))
 assert.equal(listed.payload.hosts.length, 1)
 assert.equal(listed.payload.hosts[0].name, 'zlw-azure')
 
-// ---------------------------------------------------------------- 2. connectivity
+// ---------------------------------------------------------------- 2. connect / disconnect
 
-const tested = await call('test', { id: 'h1' })
-assert.equal(tested.status, 200, JSON.stringify(tested.payload))
-assert.equal(tested.payload.status, 'connected')
-assert.equal(lastCommand, 'true')
+const connected = await call('connect', { id: 'h1' })
+assert.equal(connected.status, 200, JSON.stringify(connected.payload))
+assert.equal(connected.payload.connected, true)
+assert.equal(lastCommand, plugin.SESSION_COMMAND, 'connecting must open a held session')
 assert.equal(lastDestination, 'zlw@40.89.131.159')
+assert.equal(lastStdio.stdin, 'pipe', 'the held session must own its stdin')
+assert.equal(sessionHandles.length, 1)
+
+// A second connect must reuse the live session instead of stacking processes.
+const reused = await call('connect', { id: 'h1' })
+assert.equal(reused.payload.connected, true)
+assert.equal(sessionHandles.length, 1, 'a live session must not be duplicated')
+
+const sessions = await call('sessions')
+assert.equal(sessions.status, 200, JSON.stringify(sessions.payload))
+assert.deepEqual(sessions.payload.connected, ['h1'])
+
+const listedWhileConnected = await call('list')
+assert.equal(listedWhileConnected.payload.hosts[0].connected, true, 'the list must expose live sessions')
+
+const disconnected = await call('disconnect', { id: 'h1' })
+assert.equal(disconnected.status, 200, JSON.stringify(disconnected.payload))
+assert.equal(disconnected.payload.connected, false)
+assert.equal(sessionHandles[0].terminated, true, 'disconnecting must end the session process')
+assert.deepEqual((await call('sessions')).payload.connected, [])
+assert.equal((await call('list')).payload.hosts[0].connected, false)
+
+// Disconnecting twice is harmless.
+assert.equal((await call('disconnect', { id: 'h1' })).status, 200)
+
+// A rejected login must not be reported as connected, and must not leak a session.
+sessionMode = 'denied'
+const denied = await call('connect', { id: 'h1' })
+assert.equal(denied.status, 200, JSON.stringify(denied.payload))
+assert.equal(denied.payload.connected, false)
+assert.equal(denied.payload.code, 'failed')
+assert.ok(String(denied.payload.error).includes('Permission denied'), denied.payload.error)
+assert.deepEqual((await call('sessions')).payload.connected, [])
+assert.equal(sessionHandles.at(-1).terminated, true, 'a failed session must be cleaned up')
+
+// An unknown host is a 404 rather than a fake success.
+assert.equal((await call('connect', { id: 'nope' })).status, 404)
+
+// Editing a host closes the session it was holding: its parameters changed.
+sessionMode = 'ready'
+await call('connect', { id: 'h1' })
+assert.equal((await call('list')).payload.hosts[0].connected, true)
+const edited = await call('save', {
+  id: 'h1',
+  name: 'zlw-azure',
+  host: '40.89.131.159',
+  port: 2222,
+  user: 'zlw',
+  defaultWorkspace: '/home/zlw/projects',
+  useSshConfig: false,
+})
+assert.equal(edited.status, 200, JSON.stringify(edited.payload))
+assert.deepEqual((await call('sessions')).payload.connected, [], 'saving a host must close its session')
+assert.equal(edited.payload.host.connected, undefined, 'a saved host carries no stale session flag')
 
 // ---------------------------------------------------------------- 3. listing
 
