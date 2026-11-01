@@ -5,7 +5,7 @@
  * imports concrete aliases from ~/.ssh/config, and runs a bounded OpenSSH
  * connectivity check through the mounted subprocess provider.
  */
-import { randomUUID } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import { chmod, mkdir, readFile, readdir, rename, writeFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import path from 'node:path'
@@ -18,8 +18,14 @@ const DATA_VERSION = 1
 const TEST_TIMEOUT_MS = 20_000
 /** Per-stream captured output ceiling. */
 const MAX_OUTPUT_BYTES = 64 * 1024
+/** Largest text file the editor will open. */
+const MAX_EDIT_BYTES = 1024 * 1024
+/** Largest payload one save may send back. */
+const MAX_WRITE_BYTES = 4 * 1024 * 1024
+/** Capture ceiling for one base64 file read (a 1 MiB file is ~1.4 MiB). */
+const MAX_FILE_OUTPUT_BYTES = 8 * 1024 * 1024
 /** Accepted JSON request-body ceiling. */
-const MAX_BODY_BYTES = 1_000_000
+const MAX_BODY_BYTES = 8 * 1024 * 1024
 /** Name of the generated non-interactive askpass helper. */
 const ASKPASS_NAME = 'askpass.sh'
 
@@ -126,9 +132,12 @@ async function readData() {
     if (error?.code === 'ENOENT') return emptyData()
     throw error
   }
+  const body = text.replace(/^\uFEFF/, '')
+  if (body.trim() === '') return emptyData()
   let parsed
   try {
-    parsed = JSON.parse(text)
+    // Editors and PowerShell's UTF-8 writers may prepend a BOM; JSON.parse rejects it.
+    parsed = JSON.parse(body)
   } catch {
     throw new HttpError(500, 'host/data-invalid', `The SSH host data file is not valid JSON: ${hostFile()}`)
   }
@@ -599,11 +608,128 @@ async function ensureAskpass() {
   return file
 }
 
+/** Maximum directory entries returned by one remote listing. */
+const MAX_LIST_ENTRIES = 2_000
+
 /**
- * Build the bounded OpenSSH connectivity-check command.
+ * Quote one value for a POSIX shell single-quoted word.
+ * @param {string} value - literal text.
+ * @returns {string} the quoted word.
+ */
+export function posixQuote(value) {
+  return `'${String(value).replace(/'/g, "'\\''")}'`
+}
+
+/**
+ * Build the remote shell words for one configured directory. `~` and `~/…`
+ * expand through the remote login shell, never locally.
+ * @param {string} value - configured path.
+ * @returns {string} shell words naming the directory.
+ */
+export function remotePathExpression(value) {
+  const text = typeof value === 'string' ? value.trim() : ''
+  if (text === '' || text === '~') return '"$HOME"'
+  if (text.startsWith('~/')) {
+    const rest = text.slice(2)
+    return rest === '' ? '"$HOME"' : `"$HOME"/${posixQuote(rest)}`
+  }
+  return posixQuote(text)
+}
+
+/**
+ * Build the remote command that lists one directory. Its first stdout line is
+ * the resolved absolute path, so a `~` root can become a real location.
+ * @param {string} path - configured directory.
+ * @returns {string} remote shell command.
+ */
+export function buildListCommand(path) {
+  return `cd -- ${remotePathExpression(path)} && printf '%s\\n' "$PWD" && LC_ALL=C ls -1Ap .`
+}
+
+/**
+ * Parse the output of one listing command. `ls -p` marks directories with a
+ * trailing slash and never lists `.` or `..`.
+ * @param {string} stdout - captured remote stdout.
+ * @returns {{resolved: string, entries: {name: string, kind: 'directory'|'file'}[]}} the listing.
+ */
+export function parseListing(stdout) {
+  const lines = String(stdout).split(/\r?\n/)
+  const resolved = (lines.shift() ?? '').trim()
+  const entries = []
+  for (const line of lines) {
+    if (line === '') continue
+    const isDirectory = line.endsWith('/')
+    const name = isDirectory ? line.slice(0, -1) : line
+    if (name === '' || name === '.' || name === '..') continue
+    entries.push({ name, kind: isDirectory ? 'directory' : 'file' })
+  }
+  return { resolved, entries }
+}
+
+/**
+ * Remote snippet printing a file's sha256, preferring GNU coreutils and
+ * falling back to the BSD/macOS `shasum`. Prints nothing when the file is
+ * missing or unreadable, so an empty result means "cannot read".
+ * @param {string} target - shell words naming the file.
+ * @returns {string} a remote shell snippet.
+ */
+function hashSnippet(target) {
+  return `(sha256sum -- ${target} 2>/dev/null || shasum -a 256 -- ${target}) | cut -d' ' -f1`
+}
+
+/**
+ * Build the read command: line 1 is the remote sha256, the rest is the file
+ * as one base64 string, capped one byte above the editable limit so an
+ * oversized file is detected without transferring it.
+ * @param {string} path - absolute remote path.
+ * @returns {string} remote shell command.
+ */
+export function buildFileReadCommand(path) {
+  const target = remotePathExpression(path)
+  return `p=${target} && sha=$( ${hashSnippet('"$p"')} ) && test -n "$sha" || exit 4; `
+    + `printf '%s\\n' "$sha" && head -c ${MAX_EDIT_BYTES + 1} "$p" | base64 | tr -d '\\n'`
+}
+
+/**
+ * Build the hash-only command used for conflict detection.
+ * @param {string} path - absolute remote path.
+ * @returns {string} remote shell command printing the sha256 or nothing.
+ */
+export function buildFileHashCommand(path) {
+  const target = remotePathExpression(path)
+  return `p=${target} && ${hashSnippet('"$p"')}`
+}
+
+/**
+ * Build the write command: stdin carries base64 so the bytes that land are
+ * exactly the bytes we hashed, then the file is re-hashed for verification.
+ * @param {string} path - absolute remote path.
+ * @returns {string} remote shell command.
+ */
+export function buildFileWriteCommand(path) {
+  const target = remotePathExpression(path)
+  return `p=${target} && base64 -d > "$p" && ${hashSnippet('"$p"')}`
+}
+
+/**
+ * Parent directory of one absolute remote path.
+ * @param {string} value - absolute remote path.
+ * @returns {string} the parent, or an empty string at or above the root.
+ */
+export function parentPath(value) {
+  if (typeof value !== 'string' || !value.startsWith('/')) return ''
+  const trimmed = value.length > 1 && value.endsWith('/') ? value.slice(0, -1) : value
+  if (trimmed === '/') return ''
+  const index = trimmed.lastIndexOf('/')
+  if (index < 0) return ''
+  return index === 0 ? '/' : trimmed.slice(0, index)
+}
+
+/**
+ * Build one bounded OpenSSH invocation for a remote command.
  * @param {object} host - host row.
  * @param {{password?: string, passphrase?: string}} secrets - stored secrets.
- * @param {{sshPath: string, askpassPath?: string, home?: string, env?: NodeJS.ProcessEnv}} settings - local facts.
+ * @param {{sshPath: string, askpassPath?: string, home?: string, env?: NodeJS.ProcessEnv, remoteCommand?: string}} settings - local facts and the remote command (`true` when omitted).
  * @returns {{argv: string[], env: NodeJS.ProcessEnv}} spawn arguments.
  */
 export function buildSshInvocation(host, secrets, settings) {
@@ -641,8 +767,29 @@ export function buildSshInvocation(host, secrets, settings) {
   } else {
     argv.push('-o', 'BatchMode=yes')
   }
-  argv.push('--', destination, 'true')
+  const remoteCommand = typeof settings.remoteCommand === 'string' && settings.remoteCommand !== ''
+    ? settings.remoteCommand
+    : 'true'
+  argv.push('--', destination, remoteCommand)
   return { argv, env }
+}
+
+/**
+ * Read one collected stream without consuming it.
+ * @param {object|undefined} reader - collected output reader.
+ * @returns {{text: string, lossy: boolean}} captured text and truncation flag.
+ */
+function readCollectedDetail(reader) {
+  if (reader === undefined) return { text: '', lossy: false }
+  try {
+    const read = reader.readFrom(0)
+    return {
+      text: typeof read?.text === 'string' ? read.text : '',
+      lossy: read?.lossy === true,
+    }
+  } catch {
+    return { text: '', lossy: false }
+  }
 }
 
 /**
@@ -651,13 +798,7 @@ export function buildSshInvocation(host, secrets, settings) {
  * @returns {string} captured text.
  */
 function readCollected(reader) {
-  if (reader === undefined) return ''
-  try {
-    const read = reader.readFrom(0)
-    return typeof read?.text === 'string' ? read.text : ''
-  } catch {
-    return ''
-  }
+  return readCollectedDetail(reader).text
 }
 
 /**
@@ -675,28 +816,35 @@ function summarizeDiagnostics(text) {
 }
 
 /**
- * Run one bounded connectivity check.
+ * Run one bounded remote command through the local OpenSSH client.
  * @param {import('@deepseek-ai/cordis').Context} ctx - plugin context.
- * @param {string} id - host identity.
+ * @param {object} host - host row.
+ * @param {{password?: string, passphrase?: string}} secrets - stored secrets.
+ * @param {string} remoteCommand - command for the remote login shell.
  * @param {AbortSignal|undefined} signal - caller cancellation.
- * @returns {Promise<{status: 'connected'|'disconnected', code?: string, error?: string, durationMs: number}>} outcome.
+ * @param {{maxOutputBytes?: number, stdinData?: string}} [options] - capture ceiling and optional stdin payload.
+ * @returns {Promise<{missing: boolean, timedOut: boolean, exitCode: number|undefined, stdout: string, stderr: string, stdoutLossy: boolean, durationMs: number, failure?: string}>} outcome.
  */
-async function testHost(ctx, id, signal) {
-  const data = await readData()
-  const host = data.hosts.find(candidate => candidate.id === id)
-  if (host === undefined) throw new HttpError(404, 'host/not-found', 'That host no longer exists.')
+async function runSsh(ctx, host, secrets, remoteCommand, signal, options = {}) {
   const sshPath = await resolveSsh(ctx)
   if (sshPath === undefined) {
     return {
-      status: 'disconnected',
-      code: 'ssh-missing',
-      error: 'The ssh command is not available to the Harness host.',
+      missing: true,
+      timedOut: false,
+      exitCode: undefined,
+      stdout: '',
+      stderr: '',
+      stdoutLossy: false,
       durationMs: 0,
     }
   }
-  const secrets = await readSecrets(ctx.get('credentials'), host.id)
   const askpassPath = secrets.password !== undefined || secrets.passphrase !== undefined ? await ensureAskpass() : undefined
-  const { argv, env } = buildSshInvocation(host, secrets, { sshPath, askpassPath, home: homedir() })
+  const { argv, env } = buildSshInvocation(host, secrets, {
+    sshPath,
+    askpassPath,
+    home: homedir(),
+    remoteCommand,
+  })
   const controller = new AbortController()
   let timedOut = false
   const timer = setTimeout(() => {
@@ -714,33 +862,296 @@ async function testHost(ctx, id, signal) {
       signal: controller.signal,
       env,
       stdio: {
-        stdin: 'ignore',
-        stdout: { maxBytes: MAX_OUTPUT_BYTES },
+        stdin: options.stdinData === undefined ? 'ignore' : { data: options.stdinData },
+        stdout: { maxBytes: options.maxOutputBytes ?? MAX_OUTPUT_BYTES },
         stderr: { maxBytes: MAX_OUTPUT_BYTES },
       },
     })
     const outcome = await handle.done
-    const durationMs = Date.now() - started
-    if (timedOut) {
-      return { status: 'disconnected', code: 'timeout', error: 'The connection timed out.', durationMs }
-    }
-    if (outcome.exitCode === 0) return { status: 'connected', durationMs }
-    const detail = summarizeDiagnostics(readCollected(handle.collected.stderr))
-      || summarizeDiagnostics(readCollected(handle.collected.stdout))
-      || `ssh exited with code ${String(outcome.exitCode ?? 'unknown')}.`
-    return { status: 'disconnected', code: 'failed', error: detail, durationMs }
-  } catch (error) {
-    const durationMs = Date.now() - started
+    const stdout = readCollectedDetail(handle.collected.stdout)
     return {
-      status: 'disconnected',
-      code: timedOut ? 'timeout' : 'failed',
-      error: timedOut ? 'The connection timed out.' : error instanceof Error ? error.message : String(error),
-      durationMs,
+      missing: false,
+      timedOut,
+      exitCode: outcome.exitCode,
+      stdout: stdout.text,
+      stderr: readCollected(handle.collected.stderr),
+      stdoutLossy: stdout.lossy,
+      durationMs: Date.now() - started,
+    }
+  } catch (error) {
+    return {
+      missing: false,
+      timedOut,
+      exitCode: undefined,
+      stdout: '',
+      stderr: '',
+      stdoutLossy: false,
+      durationMs: Date.now() - started,
+      failure: timedOut ? 'The connection timed out.' : error instanceof Error ? error.message : String(error),
     }
   } finally {
     clearTimeout(timer)
     signal?.removeEventListener('abort', forward)
   }
+}
+
+/**
+ * Run one bounded connectivity check.
+ * @param {import('@deepseek-ai/cordis').Context} ctx - plugin context.
+ * @param {string} id - host identity.
+ * @param {AbortSignal|undefined} signal - caller cancellation.
+ * @returns {Promise<{status: 'connected'|'disconnected', code?: string, error?: string, durationMs: number}>} outcome.
+ */
+async function testHost(ctx, id, signal) {
+  const data = await readData()
+  const host = data.hosts.find(candidate => candidate.id === id)
+  if (host === undefined) throw new HttpError(404, 'host/not-found', 'That host no longer exists.')
+  const secrets = await readSecrets(ctx.get('credentials'), host.id)
+  const outcome = await runSsh(ctx, host, secrets, 'true', signal)
+  if (outcome.missing) {
+    return {
+      status: 'disconnected',
+      code: 'ssh-missing',
+      error: 'The ssh command is not available to the Harness host.',
+      durationMs: 0,
+    }
+  }
+  if (outcome.timedOut) {
+    return { status: 'disconnected', code: 'timeout', error: 'The connection timed out.', durationMs: outcome.durationMs }
+  }
+  if (outcome.exitCode === 0) return { status: 'connected', durationMs: outcome.durationMs }
+  const detail = summarizeDiagnostics(outcome.stderr)
+    || summarizeDiagnostics(outcome.stdout)
+    || outcome.failure
+    || `ssh exited with code ${String(outcome.exitCode ?? 'unknown')}.`
+  return { status: 'disconnected', code: 'failed', error: detail, durationMs: outcome.durationMs }
+}
+
+/**
+ * List one directory on a remote host through the local OpenSSH client.
+ * @param {import('@deepseek-ai/cordis').Context} ctx - plugin context.
+ * @param {Record<string, unknown>} input - request body (`id`, optional `path`).
+ * @param {AbortSignal|undefined} signal - caller cancellation.
+ * @returns {Promise<{path: string, parent: string, entries: {name: string, kind: string}[], truncated: boolean}>} the listing.
+ */
+async function browseHost(ctx, input, signal) {
+  const id = typeof input.id === 'string' ? input.id.trim() : ''
+  if (id === '') throw new HttpError(400, 'host/invalid-field', 'A host id is required.')
+  const requestedPath = typeof input.path === 'string' ? input.path.trim() : ''
+  if (requestedPath.length > 4_096) throw new HttpError(400, 'host/path-invalid', 'The path is too long.')
+  if (/[\u0000-\u001f\u007f]/.test(requestedPath)) {
+    throw new HttpError(400, 'host/path-invalid', 'The path contains a control character.')
+  }
+  if (requestedPath.startsWith('-')) throw new HttpError(400, 'host/path-invalid', 'A path cannot start with "-".')
+  const data = await readData()
+  const host = data.hosts.find(candidate => candidate.id === id)
+  if (host === undefined) throw new HttpError(404, 'host/not-found', 'That host no longer exists.')
+  const secrets = await readSecrets(ctx.get('credentials'), host.id)
+  const outcome = await runSsh(ctx, host, secrets, buildListCommand(requestedPath), signal)
+  if (outcome.missing) {
+    throw new HttpError(409, 'host/ssh-missing', 'The ssh command is not available to the Harness host.')
+  }
+  if (outcome.timedOut) throw new HttpError(504, 'host/timeout', 'Reading the remote folder timed out.')
+  if (outcome.exitCode !== 0) {
+    const detail = summarizeDiagnostics(outcome.stderr)
+      || summarizeDiagnostics(outcome.stdout)
+      || outcome.failure
+      || `ssh exited with code ${String(outcome.exitCode ?? 'unknown')}.`
+    throw new HttpError(502, 'host/remote-failed', detail)
+  }
+  const { resolved, entries } = parseListing(outcome.stdout)
+  if (resolved === '') {
+    throw new HttpError(502, 'host/remote-failed', 'The remote host returned no directory path.')
+  }
+  return {
+    path: resolved,
+    parent: parentPath(resolved),
+    entries: entries.slice(0, MAX_LIST_ENTRIES),
+    truncated: entries.length > MAX_LIST_ENTRIES,
+  }
+}
+
+/**
+ * Read one required host id from a request body.
+ * @param {Record<string, unknown>} input - request body.
+ * @returns {string} the host id.
+ */
+function hostIdOf(input) {
+  const id = typeof input.id === 'string' ? input.id.trim() : ''
+  if (id === '') throw new HttpError(400, 'host/invalid-field', 'A host id is required.')
+  return id
+}
+
+/**
+ * Read one validated remote path from a request body.
+ * @param {Record<string, unknown>} input - request body.
+ * @param {{absolute?: boolean}} [options] - whether an absolute path is required.
+ * @returns {string} the path.
+ */
+function remotePathOf(input, options = {}) {
+  const value = typeof input.path === 'string' ? input.path.trim() : ''
+  if (value.length > 4_096) throw new HttpError(400, 'host/path-invalid', 'The path is too long.')
+  if (/[\u0000-\u001f\u007f]/.test(value)) {
+    throw new HttpError(400, 'host/path-invalid', 'The path contains a control character.')
+  }
+  if (value.startsWith('-')) throw new HttpError(400, 'host/path-invalid', 'A path cannot start with "-".')
+  if (options.absolute === true && !value.startsWith('/')) {
+    throw new HttpError(400, 'host/path-invalid', 'An absolute remote path is required.')
+  }
+  return value
+}
+
+/**
+ * Resolve one stored host row.
+ * @param {string} id - host identity.
+ * @returns {Promise<object>} the row.
+ */
+async function findHost(id) {
+  const data = await readData()
+  const host = data.hosts.find(candidate => candidate.id === id)
+  if (host === undefined) throw new HttpError(404, 'host/not-found', 'That host no longer exists.')
+  return host
+}
+
+/**
+ * Reduce one failed ssh outcome to the message an operator needs.
+ * @param {object} outcome - runSsh result.
+ * @returns {string} the detail, never empty.
+ */
+function failureDetail(outcome) {
+  return summarizeDiagnostics(outcome.stderr)
+    || summarizeDiagnostics(outcome.stdout)
+    || outcome.failure
+    || `ssh exited with code ${String(outcome.exitCode ?? 'unknown')}.`
+}
+
+/**
+ * Throw the HTTP failure matching one non-zero ssh outcome.
+ * @param {object} outcome - runSsh result.
+ * @param {string} timeoutMessage - copy for the timeout case.
+ * @param {string} context - what was attempted, for unexpected-exit copy.
+ */
+function throwSshFailure(outcome, timeoutMessage, context) {
+  if (outcome.missing) {
+    throw new HttpError(409, 'host/ssh-missing', 'The ssh command is not available to the Harness host.')
+  }
+  if (outcome.timedOut) throw new HttpError(504, 'host/timeout', timeoutMessage)
+  throw new HttpError(502, 'host/remote-failed', `${context}: ${failureDetail(outcome)}`)
+}
+
+/** The byte-order mark, restored only when the original file carried one. */
+const UTF8_BOM = Buffer.from([0xEF, 0xBB, 0xBF])
+
+/**
+ * Read one remote text file for the editor.
+ * @param {import('@deepseek-ai/cordis').Context} ctx - plugin context.
+ * @param {Record<string, unknown>} input - request body (`id`, `path`).
+ * @param {AbortSignal|undefined} signal - caller cancellation.
+ * @returns {Promise<{path: string, content: string, sha256: string, size: number, bom: boolean, eol: 'lf'|'crlf'}>} the file.
+ */
+async function readRemoteFile(ctx, input, signal) {
+  const id = hostIdOf(input)
+  const filePath = remotePathOf(input, { absolute: true })
+  const host = await findHost(id)
+  const secrets = await readSecrets(ctx.get('credentials'), host.id)
+  const outcome = await runSsh(ctx, host, secrets, buildFileReadCommand(filePath), signal, {
+    maxOutputBytes: MAX_FILE_OUTPUT_BYTES,
+  })
+  if (outcome.exitCode === 4) {
+    throw new HttpError(404, 'host/file-missing', 'That remote file no longer exists.')
+  }
+  if (outcome.exitCode !== 0) throwSshFailure(outcome, 'Reading the remote file timed out.', 'Could not read the file')
+  if (outcome.stdoutLossy) {
+    throw new HttpError(413, 'host/file-too-large', `The file is larger than ${String(MAX_EDIT_BYTES)} bytes.`)
+  }
+  const newline = outcome.stdout.indexOf('\n')
+  if (newline < 0) throw new HttpError(502, 'host/remote-failed', 'The remote host returned no file digest.')
+  const sha256 = outcome.stdout.slice(0, newline).trim().toLowerCase()
+  if (!/^[0-9a-f]{64}$/.test(sha256)) {
+    throw new HttpError(502, 'host/remote-failed', 'The remote host returned an unexpected file digest.')
+  }
+  const bytes = Buffer.from(outcome.stdout.slice(newline + 1).replace(/\s+/g, ''), 'base64')
+  if (bytes.length > MAX_EDIT_BYTES) {
+    throw new HttpError(413, 'host/file-too-large', `The file is larger than ${String(MAX_EDIT_BYTES)} bytes.`)
+  }
+  if (bytes.includes(0)) {
+    throw new HttpError(415, 'host/file-binary', 'The file contains binary content.')
+  }
+  const bom = bytes.length >= 3 && bytes[0] === 0xEF && bytes[1] === 0xBB && bytes[2] === 0xBF
+  let text
+  try {
+    text = new TextDecoder('utf-8', { fatal: true }).decode(bom ? bytes.subarray(3) : bytes)
+  } catch {
+    throw new HttpError(415, 'host/file-encoding', 'The file is not valid UTF-8 text.')
+  }
+  // A stray CRLF in an otherwise LF file must not turn the whole file into
+  // CRLF on save, so only a file with no lone LF counts as CRLF.
+  const crlfCount = (text.match(/\r\n/g) ?? []).length
+  const loneLfCount = (text.match(/(^|[^\r])\n/g) ?? []).length
+  const eol = crlfCount > 0 && loneLfCount === 0 ? 'crlf' : 'lf'
+  return {
+    path: filePath,
+    content: text.replace(/\r\n/g, '\n'),
+    sha256,
+    size: bytes.length,
+    bom,
+    eol,
+  }
+}
+
+/**
+ * Write one remote text file back after a conflict check.
+ * @param {import('@deepseek-ai/cordis').Context} ctx - plugin context.
+ * @param {Record<string, unknown>} input - request body (`id`, `path`, `content`, `baseSha256`, `bom`, `eol`, `force`).
+ * @param {AbortSignal|undefined} signal - caller cancellation.
+ * @returns {Promise<{path: string, size: number, sha256: string}>} the written revision.
+ */
+async function writeRemoteFile(ctx, input, signal) {
+  const id = hostIdOf(input)
+  const filePath = remotePathOf(input, { absolute: true })
+  if (typeof input.content !== 'string') {
+    throw new HttpError(400, 'host/invalid-field', 'The file content is required.')
+  }
+  const content = input.content
+  const baseSha256 = typeof input.baseSha256 === 'string' ? input.baseSha256.trim().toLowerCase() : ''
+  if (!/^[0-9a-f]{64}$/.test(baseSha256)) {
+    throw new HttpError(400, 'host/invalid-field', 'The revision the edit started from is required.')
+  }
+  const force = input.force === true
+  const eol = input.eol === 'crlf' ? 'crlf' : 'lf'
+  const bom = input.bom === true
+  const host = await findHost(id)
+  const secrets = await readSecrets(ctx.get('credentials'), host.id)
+
+  if (!force) {
+    const current = await runSsh(ctx, host, secrets, buildFileHashCommand(filePath), signal)
+    if (current.exitCode !== 0) throwSshFailure(current, 'Checking the remote file timed out.', 'Could not check the file')
+    const currentSha = current.stdout.trim().toLowerCase()
+    if (currentSha === '') {
+      throw new HttpError(404, 'host/file-missing', 'That remote file no longer exists.')
+    }
+    if (currentSha !== baseSha256) {
+      throw new HttpError(409, 'host/conflict', 'The remote file changed after it was opened.')
+    }
+  }
+
+  const normalized = eol === 'crlf' ? content.replace(/\r\n/g, '\n').replace(/\n/g, '\r\n') : content
+  const body = Buffer.from(normalized, 'utf8')
+  const bytes = bom ? Buffer.concat([UTF8_BOM, body]) : body
+  if (bytes.length > MAX_WRITE_BYTES) {
+    throw new HttpError(413, 'host/file-too-large', `The file is larger than ${String(MAX_WRITE_BYTES)} bytes.`)
+  }
+  const expected = createHash('sha256').update(bytes).digest('hex')
+  const written = await runSsh(ctx, host, secrets, buildFileWriteCommand(filePath), signal, {
+    stdinData: bytes.toString('base64'),
+    maxOutputBytes: 4_096,
+  })
+  if (written.exitCode !== 0) throwSshFailure(written, 'Saving the remote file timed out.', 'Could not save the file')
+  const actual = written.stdout.trim().split(/\r?\n/)[0].trim().toLowerCase()
+  if (actual !== expected) {
+    throw new HttpError(502, 'host/write-verify-failed', 'The remote file does not match what was sent.')
+  }
+  return { path: filePath, size: bytes.length, sha256: expected }
 }
 
 /**
@@ -865,6 +1276,9 @@ export function apply(ctx) {
     ['save', ['POST'], async request => json(await saveHost(ctx, await readJson(request)))],
     ['remove', ['POST'], async request => json(await removeHost(ctx, (await readJson(request)).id))],
     ['test', ['POST'], async request => json(await testHost(ctx, (await readJson(request)).id, request.signal))],
+    ['tree', ['POST'], async request => json(await browseHost(ctx, await readJson(request), request.signal))],
+    ['read', ['POST'], async request => json(await readRemoteFile(ctx, await readJson(request), request.signal))],
+    ['write', ['POST'], async request => json(await writeRemoteFile(ctx, await readJson(request), request.signal))],
     ['import', ['GET', 'POST'], async request => request.method === 'POST'
       ? json(await importSelected(ctx, await readJson(request)))
       : json(await importCandidates(ctx))],

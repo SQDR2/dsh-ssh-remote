@@ -15,6 +15,7 @@ window.__ModuleLoader__.load({
         title: 'SSH hosts',
         subtitle: 'Manage SSH hosts for remote development and operations. Connect runs a quick reachability check.',
         'action.add': 'Add host',
+        'action.browse': 'Folders',
         'action.import': 'Import from ~/.ssh/config',
         'action.connect': 'Connect',
         'action.connecting': 'Connecting…',
@@ -90,6 +91,41 @@ window.__ModuleLoader__.load({
         'delete.body': 'Delete “{name}”? This removes its saved password and passphrase, but no remote files.',
         'delete.confirm': 'Delete',
         'delete.busy': 'Deleting…',
+        'browser.title': 'Remote folders',
+        'browser.loading': 'Reading folders…',
+        'browser.empty': 'This folder is empty.',
+        'browser.failed': 'Could not read the remote folder.',
+        'browser.sshMissing': 'The ssh command is not available on this machine.',
+        'browser.timeout': 'Reading the remote folder timed out.',
+        'browser.up': 'Parent folder',
+        'browser.refresh': 'Refresh',
+        'browser.close': 'Close',
+        'browser.count': '{count} item(s)',
+        'browser.truncated': 'Only the first {count} items are shown.',
+        'browser.hint': 'Click a folder to expand it. Double-click a file to open it.',
+      'file.back': 'Back to folders',
+      'file.loading': 'Opening the file…',
+      'file.openFailed': 'Could not open this file.',
+      'file.save': 'Save',
+      'file.saving': 'Saving…',
+      'file.savedAt': 'Saved at {time}',
+      'file.saveFailed': 'Could not save the file.',
+      'file.conflict': 'Someone changed this file on the server while you were editing.',
+      'file.conflictBody': 'Overwriting replaces their version with yours.',
+      'file.overwrite': 'Overwrite',
+      'file.reload': 'Discard mine',
+      'file.cancel': 'Cancel',
+      'file.dirty': 'Unsaved changes',
+      'file.leaveBody': 'This file has unsaved changes.',
+      'file.saveAndLeave': 'Save and leave',
+      'file.discard': 'Discard',
+      'file.dangerBody': '{path} is a system location. Write it anyway?',
+      'file.confirmWrite': 'Write anyway',
+      'file.tooLarge': 'This file is too large to edit here (limit {limit}).',
+      'file.tooLargeSave': 'The content is too large to save (limit {limit}).',
+      'file.binary': 'This file contains binary data, so it cannot be edited as text.',
+      'file.encoding': 'This file is not UTF-8 text, so it cannot be edited here.',
+      'file.missing': 'This file no longer exists on the server.',
         'error.unknown': 'Something went wrong.',
       },
       zh: {
@@ -97,6 +133,7 @@ window.__ModuleLoader__.load({
         title: '远程 SSH 主机',
         subtitle: '管理用于远程开发与运维的 SSH 主机；「连接」会执行一次 SSH 连通性检查。',
         'action.add': '添加主机',
+        'action.browse': '文件夹',
         'action.import': '从 ~/.ssh/config 导入',
         'action.connect': '连接',
         'action.connecting': '连接中…',
@@ -172,6 +209,41 @@ window.__ModuleLoader__.load({
         'delete.body': '确定删除「{name}」吗？保存的密码和口令会一并删除，远程文件不受影响。',
         'delete.confirm': '删除',
         'delete.busy': '删除中…',
+        'browser.title': '远程文件夹',
+        'browser.loading': '正在读取文件夹…',
+        'browser.empty': '这个文件夹是空的。',
+        'browser.failed': '无法读取远程文件夹。',
+        'browser.sshMissing': '本机找不到 ssh 命令。',
+        'browser.timeout': '读取远程文件夹超时。',
+        'browser.up': '上级文件夹',
+        'browser.refresh': '刷新',
+        'browser.close': '关闭',
+        'browser.count': '{count} 项',
+        'browser.truncated': '仅显示前 {count} 项。',
+        'browser.hint': '点击文件夹可展开；双击文件可打开。',
+      'file.back': '返回文件夹',
+      'file.loading': '正在打开文件…',
+      'file.openFailed': '无法打开这个文件。',
+      'file.save': '保存',
+      'file.saving': '正在保存…',
+      'file.savedAt': '{time} 已保存',
+      'file.saveFailed': '无法保存文件。',
+      'file.conflict': '你编辑期间，服务器上的这个文件已被别人改动。',
+      'file.conflictBody': '覆盖会用你的版本替换他们的版本。',
+      'file.overwrite': '覆盖远端',
+      'file.reload': '放弃我的修改',
+      'file.cancel': '取消',
+      'file.dirty': '有未保存的修改',
+      'file.leaveBody': '这个文件有未保存的修改。',
+      'file.saveAndLeave': '保存并返回',
+      'file.discard': '放弃修改',
+      'file.dangerBody': '{path} 属于系统位置，仍要写入吗？',
+      'file.confirmWrite': '仍要写入',
+      'file.tooLarge': '文件太大，无法在这里编辑（上限 {limit}）。',
+      'file.tooLargeSave': '内容太大，无法保存（上限 {limit}）。',
+      'file.binary': '这个文件包含二进制内容，不能当作文本编辑。',
+      'file.encoding': '这个文件不是 UTF-8 文本，无法在这里编辑。',
+      'file.missing': '服务器上这个文件已经不存在了。',
         'error.unknown': '出现未知错误。',
       },
     }
@@ -186,7 +258,7 @@ window.__ModuleLoader__.load({
         color: var(--dsw-alias-label-primary);
         background: var(--dsw-alias-bg-base);
       }
-      .dsh-ssh-hosts-inner { width: 100%; max-width: 960px; margin: 0 auto; }
+      .dsh-ssh-hosts-inner { width: 100%; max-width: 1120px; margin: 0 auto; }
       .dsh-ssh-hosts-head {
         display: flex; align-items: flex-start; justify-content: space-between;
         gap: 16px; flex-wrap: wrap; margin-bottom: 20px;
@@ -236,6 +308,11 @@ window.__ModuleLoader__.load({
         color: var(--dsw-alias-label-primary);
       }
       .dsh-ssh-hosts-icon-btn:disabled { opacity: 0.45; cursor: not-allowed; }
+      .dsh-ssh-hosts-icon-btn[aria-pressed="true"] {
+        border-color: color-mix(in srgb, var(--dsw-alias-brand-primary) 55%, transparent);
+        color: var(--dsw-alias-brand-primary);
+        background: color-mix(in srgb, var(--dsw-alias-brand-primary) 10%, transparent);
+      }
       .dsh-ssh-hosts-icon-btn--danger:hover:not(:disabled) {
         color: var(--dsw-alias-state-error-primary);
         background: color-mix(in srgb, var(--dsw-alias-state-error-primary) 9%, transparent);
@@ -385,6 +462,143 @@ window.__ModuleLoader__.load({
         color: var(--dsw-alias-label-secondary);
         background: color-mix(in srgb, var(--dsw-alias-label-secondary) 12%, transparent);
       }
+      .dsh-ssh-hosts-body { display: flex; align-items: flex-start; gap: 20px; }
+      .dsh-ssh-hosts-list { flex: 1; min-width: 0; }
+      .dsh-ssh-hosts-browser {
+        display: flex; flex-direction: column; flex: 0 0 clamp(280px, 32vw, 400px);
+        position: sticky; top: 0; max-height: calc(100vh - 120px); min-height: 220px;
+        border: 0.5px solid var(--dsw-alias-border-l1); border-radius: 10px;
+        background: var(--dsw-alias-bg-layer-1); overflow: hidden;
+      }
+      .dsh-ssh-hosts-browserHead {
+        display: flex; align-items: center; gap: 8px;
+        padding: 8px 8px 8px 12px; border-bottom: 0.5px solid var(--dsw-alias-border-l1);
+      }
+      .dsh-ssh-hosts-browserTitle {
+        display: flex; flex-direction: column; gap: 1px; flex: 1; min-width: 0;
+      }
+      .dsh-ssh-hosts-browserName {
+        font-size: 13px; line-height: 19px; font-weight: 600;
+        overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+      }
+      .dsh-ssh-hosts-browserKind {
+        font-size: 11px; line-height: 16px; color: var(--dsw-alias-label-secondary);
+      }
+      .dsh-ssh-hosts-browserPath {
+        display: flex; align-items: center; gap: 4px; padding: 4px 6px 4px 8px;
+        border-bottom: 0.5px solid var(--dsw-alias-border-l1);
+      }
+      .dsh-ssh-hosts-pathText {
+        flex: 1; min-width: 0; font-size: 11px; line-height: 18px; direction: rtl; text-align: left;
+        color: var(--dsw-alias-label-secondary);
+        font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+        overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+      }
+      .dsh-ssh-hosts-tree { flex: 1; min-height: 120px; overflow: auto; padding: 6px; }
+      .dsh-ssh-hosts-treeRow {
+        display: flex; align-items: center; gap: 6px; height: 28px;
+        padding-right: 8px; border-radius: 6px; min-width: 0;
+      }
+      .dsh-ssh-hosts-treeRow--dir { cursor: pointer; }
+      .dsh-ssh-hosts-treeRow--file { cursor: pointer; }
+      .dsh-ssh-hosts-treeRow--dir:hover,
+      .dsh-ssh-hosts-treeRow--dir:focus-visible,
+      .dsh-ssh-hosts-treeRow--file:hover,
+      .dsh-ssh-hosts-treeRow--file:focus-visible {
+        background: color-mix(in srgb, var(--dsw-alias-label-primary) 6%, transparent);
+        outline: none;
+      }
+      .dsh-ssh-hosts-treeRow--selected {
+        background: color-mix(in srgb, var(--dsw-alias-brand-primary) 12%, transparent);
+      }
+      .dsh-ssh-hosts-treeRow--selected .dsh-ssh-hosts-treeName { color: var(--dsw-alias-brand-primary); }
+      .dsh-ssh-hosts-treeChevron {
+        display: flex; align-items: center; justify-content: center; flex: none;
+        width: 14px; height: 14px; color: var(--dsw-alias-label-secondary);
+        transition: transform 120ms ease;
+      }
+      .dsh-ssh-hosts-treeChevron--open { transform: rotate(90deg); }
+      .dsh-ssh-hosts-treeIcon {
+        display: flex; align-items: center; justify-content: center; flex: none;
+        width: 16px; height: 16px; color: var(--dsw-alias-label-secondary);
+      }
+      .dsh-ssh-hosts-treeRow--dir .dsh-ssh-hosts-treeIcon { color: var(--dsw-alias-brand-primary); }
+      .dsh-ssh-hosts-treeName {
+        font-size: 12.5px; line-height: 20px;
+        overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+      }
+      .dsh-ssh-hosts-treeRow--hidden .dsh-ssh-hosts-treeName { opacity: 0.55; }
+      .dsh-ssh-hosts-treeHint, .dsh-ssh-hosts-treeError {
+        padding: 4px 8px; font-size: 11px; line-height: 16px;
+        color: var(--dsw-alias-label-secondary);
+      }
+      .dsh-ssh-hosts-treeError { color: var(--dsw-alias-state-error-primary); white-space: pre-wrap; }
+      .dsh-ssh-hosts-browserFoot {
+        display: flex; align-items: center; gap: 8px; padding: 6px 10px;
+        border-top: 0.5px solid var(--dsw-alias-border-l1);
+        font-size: 11px; line-height: 16px; color: var(--dsw-alias-label-secondary);
+      }
+      .dsh-ssh-hosts-browserFoot > span { flex: 1; min-width: 0; }
+      .dsh-ssh-hosts-browser--editor { flex-basis: clamp(340px, 44vw, 560px); }
+      .dsh-ssh-hosts-editor { display: flex; flex-direction: column; flex: 1; min-height: 0; }
+      .dsh-ssh-hosts-editorHead {
+        display: flex; align-items: center; gap: 6px; padding: 6px 10px;
+        border-bottom: 0.5px solid var(--dsw-alias-border-l1);
+      }
+      .dsh-ssh-hosts-editorName {
+        flex: 1; min-width: 0; font-size: 12.5px; line-height: 18px;
+        overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+      }
+      .dsh-ssh-hosts-editorDot {
+        flex: none; width: 6px; height: 6px; border-radius: 50%;
+        background: var(--dsw-alias-state-warn-primary, var(--dsw-alias-brand-primary));
+      }
+      .dsh-ssh-hosts-editorSave[disabled] { opacity: 0.4; }
+      .dsh-ssh-hosts-editorPath {
+        padding: 2px 10px 6px; font-size: 11px; line-height: 16px; direction: rtl; text-align: left;
+        color: var(--dsw-alias-label-secondary);
+        font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+        overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+      }
+      .dsh-ssh-hosts-editorPrompt {
+        display: flex; flex-direction: column; gap: 6px; margin: 0 8px 6px; padding: 8px;
+        border-radius: 8px;
+        border: 0.5px solid var(--dsw-alias-state-warn-primary, var(--dsw-alias-border-l1));
+        background: color-mix(in srgb, var(--dsw-alias-state-warn-primary, var(--dsw-alias-label-primary)) 8%, transparent);
+      }
+      .dsh-ssh-hosts-editorPromptText { font-size: 11.5px; line-height: 16px; }
+      .dsh-ssh-hosts-editorPromptActions { display: flex; flex-wrap: wrap; gap: 6px; }
+      .dsh-ssh-hosts-editorError {
+        margin: 0 8px 6px; padding: 6px 8px; border-radius: 8px;
+        font-size: 11.5px; line-height: 16px; white-space: pre-wrap;
+        color: var(--dsw-alias-state-error-primary);
+        background: color-mix(in srgb, var(--dsw-alias-state-error-primary) 8%, transparent);
+      }
+      .dsh-ssh-hosts-editorArea {
+        flex: 1; min-height: 160px; margin: 0 8px 6px; padding: 8px;
+        border-radius: 8px; resize: none;
+        border: 0.5px solid var(--dsw-alias-border-l1);
+        background: var(--dsw-alias-bg-base, transparent);
+        color: var(--dsw-alias-label-primary);
+        font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+        font-size: 12px; line-height: 18px;
+        tab-size: 2; white-space: pre; overflow: auto;
+      }
+      .dsh-ssh-hosts-editorArea:focus {
+        outline: none;
+        border-color: var(--dsw-alias-brand-primary);
+      }
+      .dsh-ssh-hosts-editorFoot {
+        display: flex; flex-wrap: wrap; align-items: center; gap: 10px; padding: 6px 10px;
+        border-top: 0.5px solid var(--dsw-alias-border-l1);
+        font-size: 11px; line-height: 16px; color: var(--dsw-alias-label-secondary);
+        font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      }
+      .dsh-ssh-hosts-editorNotice { color: var(--dsw-alias-state-success-primary, var(--dsw-alias-label-secondary)); }
+      @media (max-width: 860px) {
+        .dsh-ssh-hosts-body { flex-direction: column; }
+        .dsh-ssh-hosts-browser { flex: none; width: 100%; position: static; max-height: none; }
+      }
       @media (max-width: 640px) {
         .dsh-ssh-hosts-row { flex-wrap: wrap; }
         .dsh-ssh-hosts-rowActions { width: 100%; justify-content: flex-end; }
@@ -435,6 +649,9 @@ window.__ModuleLoader__.load({
       save: host => request('save', { method: 'POST', body: JSON.stringify(host) }),
       remove: id => request('remove', { method: 'POST', body: JSON.stringify({ id }) }),
       test: id => request('test', { method: 'POST', body: JSON.stringify({ id }) }),
+      tree: (id, path) => request('tree', { method: 'POST', body: JSON.stringify({ id, path }) }),
+      readFile: (id, path) => request('read', { method: 'POST', body: JSON.stringify({ id, path }) }),
+      writeFile: payload => request('write', { method: 'POST', body: JSON.stringify(payload) }),
       importCandidates: () => request('import'),
       importHosts: names => request('import', { method: 'POST', body: JSON.stringify({ names }) }),
     }
@@ -468,6 +685,49 @@ window.__ModuleLoader__.load({
       return h('svg', { viewBox: '0 0 16 16', width: size, height: size, fill: 'none', 'aria-hidden': 'true' },
         h('rect', { x: 1.6, y: 2.4, width: 12.8, height: 11.2, rx: 2.2, stroke: 'currentColor', strokeWidth: 1.3 }),
         h('path', { d: 'm4.4 6.2 2.1 1.9-2.1 1.9M8.4 10h2.8', stroke: 'currentColor', strokeWidth: 1.3, strokeLinecap: 'round', strokeLinejoin: 'round' }))
+    }
+
+    function IconFolder({ size = 14 }) {
+      return h('svg', { viewBox: '0 0 16 16', width: size, height: size, fill: 'none', 'aria-hidden': 'true' },
+        h('path', { d: 'M1.9 4.3a1.4 1.4 0 0 1 1.4-1.4h2.4l1.4 1.6h5a1.4 1.4 0 0 1 1.4 1.4v5.9a1.4 1.4 0 0 1-1.4 1.4H3.3a1.4 1.4 0 0 1-1.4-1.4z', stroke: 'currentColor', strokeWidth: 1.3, strokeLinejoin: 'round' }))
+    }
+
+    function IconFolderOpen({ size = 14 }) {
+      return h('svg', { viewBox: '0 0 16 16', width: size, height: size, fill: 'none', 'aria-hidden': 'true' },
+        h('path', { d: 'M1.9 11.6V4.3a1.4 1.4 0 0 1 1.4-1.4h2.4l1.4 1.6h4.5a1.4 1.4 0 0 1 1.4 1.4v1', stroke: 'currentColor', strokeWidth: 1.3, strokeLinejoin: 'round' }),
+        h('path', { d: 'M2.2 11.6h10.6l1.4-4.3H3.6z', stroke: 'currentColor', strokeWidth: 1.3, strokeLinejoin: 'round' }))
+    }
+
+    function IconFile({ size = 14 }) {
+      return h('svg', { viewBox: '0 0 16 16', width: size, height: size, fill: 'none', 'aria-hidden': 'true' },
+        h('path', { d: 'M4 2.2h5l3 3v8.6H4z', stroke: 'currentColor', strokeWidth: 1.3, strokeLinejoin: 'round' }),
+        h('path', { d: 'M9 2.4v3h3', stroke: 'currentColor', strokeWidth: 1.3, strokeLinejoin: 'round' }))
+    }
+
+    function IconChevron({ size = 12 }) {
+      return h('svg', { viewBox: '0 0 16 16', width: size, height: size, fill: 'none', 'aria-hidden': 'true' },
+        h('path', { d: 'm6 3.5 4.5 4.5L6 12.5', stroke: 'currentColor', strokeWidth: 1.6, strokeLinecap: 'round', strokeLinejoin: 'round' }))
+    }
+
+    function IconRefresh({ size = 14 }) {
+      return h('svg', { viewBox: '0 0 16 16', width: size, height: size, fill: 'none', 'aria-hidden': 'true' },
+        h('path', { d: 'M13 8a5 5 0 1 1-1.6-3.7M13 2.6V5h-2.4', stroke: 'currentColor', strokeWidth: 1.4, strokeLinecap: 'round', strokeLinejoin: 'round' }))
+    }
+
+    function IconUp({ size = 14 }) {
+      return h('svg', { viewBox: '0 0 16 16', width: size, height: size, fill: 'none', 'aria-hidden': 'true' },
+        h('path', { d: 'M8 12.5v-9m0 0L4.5 7M8 3.5 11.5 7', stroke: 'currentColor', strokeWidth: 1.4, strokeLinecap: 'round', strokeLinejoin: 'round' }))
+    }
+
+    function IconClose({ size = 14 }) {
+      return h('svg', { viewBox: '0 0 16 16', width: size, height: size, fill: 'none', 'aria-hidden': 'true' },
+        h('path', { d: 'm4 4 8 8M12 4l-8 8', stroke: 'currentColor', strokeWidth: 1.5, strokeLinecap: 'round' }))
+    }
+
+    function IconSave({ size = 14 }) {
+      return h('svg', { viewBox: '0 0 16 16', width: size, height: size, fill: 'none', 'aria-hidden': 'true' },
+        h('path', { d: 'M3 3.2h7.6L13 5.6v7.2H3z', stroke: 'currentColor', strokeWidth: 1.3, strokeLinejoin: 'round' }),
+        h('path', { d: 'M5.4 3.4v3.2h4.4V3.4M5.2 10.4h5.6', stroke: 'currentColor', strokeWidth: 1.3, strokeLinejoin: 'round' }))
     }
 
     /**
@@ -558,11 +818,510 @@ window.__ModuleLoader__.load({
     }
 
     /**
-     * One list row.
-     * @param {{host: object, t: Function, busy: boolean, onConnect: Function, onEdit: Function, onDelete: Function}} props - row props.
+     * Map a folder-listing failure onto localized copy.
+     * @param {Error & {code?: string}} error - failure.
+     * @param {(key: string, params?: object) => string} t - translate.
+     * @returns {string} display copy.
+     */
+    function browseErrorText(error, t) {
+      if (error?.code === 'host/ssh-missing') return t('browser.sshMissing')
+      if (error?.code === 'host/timeout') return t('browser.timeout')
+      const detail = error instanceof Error && error.message !== '' ? error.message : ''
+      return detail === '' ? t('browser.failed') : `${t('browser.failed')} ${detail}`
+    }
+
+    /**
+     * Join one remote directory and entry name into an absolute path.
+     * @param {string} base - absolute directory path.
+     * @param {string} name - direct child name.
+     * @returns {string} absolute child path.
+     */
+    function joinRemotePath(base, name) {
+      const text = typeof base === 'string' && base !== '' ? base : '/'
+      const joined = `${text.replace(/\/+$/, '')}/${name}`
+      return joined.startsWith('/') ? joined : `/${joined}`
+    }
+
+    /**
+     * Sort one listing: folders before files, then by name.
+     * @param {{name: string, kind: string}[]} entries - listing.
+     * @returns {{name: string, kind: string}[]} sorted copy.
+     */
+    function sortEntries(entries) {
+      return entries.slice().sort((left, right) => {
+        if (left.kind !== right.kind) return left.kind === 'directory' ? -1 : 1
+        return String(left.name).localeCompare(String(right.name), undefined, { numeric: true, sensitivity: 'base' })
+      })
+    }
+
+    /** Remote locations where a write deserves one extra confirmation. */
+    const DANGEROUS_ROOTS = ['/etc', '/boot', '/usr', '/var/lib']
+
+    /**
+     * Whether writing this path should be confirmed first.
+     * @param {string} value - absolute remote path.
+     * @returns {boolean} true for system locations.
+     */
+    function isDangerousRemotePath(value) {
+      return DANGEROUS_ROOTS.some(root => value === root || value.startsWith(`${root}/`))
+        || /\/\.ssh(\/|$)/.test(value)
+    }
+
+    /**
+     * Format a byte count for the editor footer.
+     * @param {number} size - bytes.
+     * @returns {string} display copy.
+     */
+    function formatBytes(size) {
+      const value = Number.isFinite(size) && size > 0 ? size : 0
+      if (value < 1024) return `${String(value)} B`
+      if (value < 1024 * 1024) return `${(value / 1024).toFixed(1)} KB`
+      return `${(value / (1024 * 1024)).toFixed(1)} MB`
+    }
+
+    /**
+     * Read the trailing name of one remote path.
+     * @param {string} value - absolute remote path.
+     * @returns {string} the file name.
+     */
+    function fileNameOf(value) {
+      const trimmed = String(value).replace(/\/+$/, '')
+      const index = trimmed.lastIndexOf('/')
+      return index < 0 ? trimmed : trimmed.slice(index + 1)
+    }
+
+    /**
+     * Map a file failure onto localized copy.
+     * @param {Error & {code?: string}} error - failure.
+     * @param {(key: string, params?: object) => string} t - translate.
+     * @param {string} [base] - fallback headline.
+     * @returns {string} display copy.
+     */
+    function fileErrorText(error, t, base) {
+      const headline = typeof base === 'string' ? base : t('file.openFailed')
+      if (error?.code === 'host/file-too-large') return t('file.tooLarge', { limit: '1 MiB' })
+      if (error?.code === 'host/file-binary') return t('file.binary')
+      if (error?.code === 'host/file-encoding') return t('file.encoding')
+      if (error?.code === 'host/file-missing') return t('file.missing')
+      if (error?.code === 'host/ssh-missing') return t('browser.sshMissing')
+      if (error?.code === 'host/timeout') return `${headline} ${t('browser.timeout')}`
+      const detail = error instanceof Error && error.message !== '' ? error.message : ''
+      return detail === '' ? headline : `${headline} ${detail}`
+    }
+
+    /**
+     * The in-panel text editor for one remote file.
+     * @param {{host: object, path: string, t: Function, onBack: Function}} props - editor props.
      * @returns {object} React element.
      */
-    function HostRow({ host, t, busy, onConnect, onEdit, onDelete }) {
+    function FileEditor({ host, path, t, onBack }) {
+      const [phase, setPhase] = React.useState('loading')
+      const [error, setError] = React.useState('')
+      const [content, setContent] = React.useState('')
+      const [original, setOriginal] = React.useState('')
+      const [revision, setRevision] = React.useState('')
+      const [meta, setMeta] = React.useState({ size: 0, bom: false, eol: 'lf' })
+      const [saving, setSaving] = React.useState(false)
+      const [saveError, setSaveError] = React.useState('')
+      const [notice, setNotice] = React.useState('')
+      const [prompt, setPrompt] = React.useState('')
+      const [caret, setCaret] = React.useState({ line: 1, column: 1 })
+      const area = React.useRef(null)
+      const dirty = phase === 'ready' && content !== original
+
+      const load = React.useCallback(async () => {
+        setPhase('loading')
+        setError('')
+        setPrompt('')
+        try {
+          const data = await api.readFile(host.id, path)
+          const text = typeof data.content === 'string' ? data.content : ''
+          setContent(text)
+          setOriginal(text)
+          setRevision(String(data.sha256 ?? ''))
+          setMeta({
+            size: Number(data.size) || 0,
+            bom: data.bom === true,
+            eol: data.eol === 'crlf' ? 'crlf' : 'lf',
+          })
+          setPhase('ready')
+        } catch (failure) {
+          setError(fileErrorText(failure, t))
+          setPhase('error')
+        }
+      }, [host.id, path, t])
+
+      React.useEffect(() => { void load() }, [load])
+
+      React.useEffect(() => {
+        if (notice === '') return undefined
+        const timer = setTimeout(() => setNotice(''), 4_000)
+        return () => clearTimeout(timer)
+      }, [notice])
+
+      const save = async (options = {}) => {
+        if (saving || phase !== 'ready') return false
+        if (options.skipDanger !== true && isDangerousRemotePath(path)) {
+          setPrompt('danger')
+          return false
+        }
+        setPrompt('')
+        setSaving(true)
+        setSaveError('')
+        try {
+          const payload = {
+            id: host.id,
+            path,
+            content,
+            baseSha256: revision,
+            bom: meta.bom,
+            eol: meta.eol,
+          }
+          if (options.force === true) payload.force = true
+          const result = await api.writeFile(payload)
+          setRevision(String(result.sha256 ?? revision))
+          setMeta(current => ({ ...current, size: Number(result.size) || current.size }))
+          setOriginal(content)
+          setNotice(t('file.savedAt', { time: new Date().toLocaleTimeString() }))
+          return true
+        } catch (failure) {
+          if (failure?.code === 'host/conflict') setPrompt('conflict')
+          else setSaveError(fileErrorText(failure, t, t('file.saveFailed')))
+          return false
+        } finally {
+          setSaving(false)
+        }
+      }
+
+      const leave = () => {
+        if (dirty) {
+          setPrompt('leave')
+          return
+        }
+        onBack()
+      }
+
+      const syncCaret = () => {
+        const target = area.current
+        if (target === null || target === undefined) return
+        const offset = target.selectionStart ?? 0
+        const lines = content.slice(0, offset).split('\n')
+        setCaret({ line: lines.length, column: (lines[lines.length - 1] ?? '').length + 1 })
+      }
+
+      const onEditorKeyDown = event => {
+        if ((event.ctrlKey || event.metaKey) && String(event.key).toLowerCase() === 's') {
+          event.preventDefault()
+          void save()
+          return
+        }
+        if (event.key === 'Tab') {
+          event.preventDefault()
+          const target = event.target
+          const start = target.selectionStart ?? content.length
+          const end = target.selectionEnd ?? start
+          setContent(`${content.slice(0, start)}  ${content.slice(end)}`)
+          setTimeout(() => {
+            if (area.current === null || area.current === undefined) return
+            area.current.selectionStart = start + 2
+            area.current.selectionEnd = start + 2
+          }, 0)
+        }
+      }
+
+      const promptText = prompt === 'danger'
+        ? t('file.dangerBody', { path })
+        : prompt === 'conflict'
+          ? `${t('file.conflict')} ${t('file.conflictBody')}`
+          : t('file.leaveBody')
+
+      return h('div', { className: 'dsh-ssh-hosts-editor' },
+        h('div', { className: 'dsh-ssh-hosts-editorHead' },
+          h('button', {
+            type: 'button',
+            className: 'dsh-ssh-hosts-icon-btn',
+            title: t('file.back'),
+            'aria-label': t('file.back'),
+            onClick: leave,
+          }, h(IconArrowLeft, { size: 14 })),
+          h('span', { className: 'dsh-ssh-hosts-treeIcon', 'aria-hidden': 'true' }, h(IconFile, { size: 14 })),
+          h('span', { className: 'dsh-ssh-hosts-editorName', title: path }, fileNameOf(path)),
+          dirty && h('span', { className: 'dsh-ssh-hosts-editorDot', title: t('file.dirty'), 'aria-label': t('file.dirty') }),
+          h('button', {
+            type: 'button',
+            className: 'dsh-ssh-hosts-icon-btn dsh-ssh-hosts-editorSave',
+            title: t('file.save'),
+            'aria-label': t('file.save'),
+            disabled: saving || phase !== 'ready' || !dirty,
+            onClick: () => { void save() },
+          }, h(IconSave, { size: 14 }))),
+        h('div', { className: 'dsh-ssh-hosts-editorPath', title: path }, path),
+        prompt !== '' && h('div', { className: 'dsh-ssh-hosts-editorPrompt', role: 'alertdialog' },
+          h('div', { className: 'dsh-ssh-hosts-editorPromptText' }, promptText),
+          h('div', { className: 'dsh-ssh-hosts-editorPromptActions' },
+            prompt === 'danger' && h('button', {
+              type: 'button',
+              className: 'dsh-ssh-hosts-btn dsh-ssh-hosts-btn--primary dsh-ssh-hosts-btn--small',
+              onClick: () => { void save({ skipDanger: true }) },
+            }, t('file.confirmWrite')),
+            prompt === 'conflict' && h('button', {
+              type: 'button',
+              className: 'dsh-ssh-hosts-btn dsh-ssh-hosts-btn--primary dsh-ssh-hosts-btn--small',
+              onClick: () => { void save({ skipDanger: true, force: true }) },
+            }, t('file.overwrite')),
+            prompt === 'conflict' && h('button', {
+              type: 'button',
+              className: 'dsh-ssh-hosts-btn dsh-ssh-hosts-btn--ghost dsh-ssh-hosts-btn--small',
+              onClick: () => { void load() },
+            }, t('file.reload')),
+            prompt === 'leave' && h('button', {
+              type: 'button',
+              className: 'dsh-ssh-hosts-btn dsh-ssh-hosts-btn--primary dsh-ssh-hosts-btn--small',
+              onClick: async () => {
+                if (await save()) onBack()
+              },
+            }, t('file.saveAndLeave')),
+            prompt === 'leave' && h('button', {
+              type: 'button',
+              className: 'dsh-ssh-hosts-btn dsh-ssh-hosts-btn--ghost dsh-ssh-hosts-btn--small',
+              onClick: () => { setPrompt(''); onBack() },
+            }, t('file.discard')),
+            h('button', {
+              type: 'button',
+              className: 'dsh-ssh-hosts-btn dsh-ssh-hosts-btn--ghost dsh-ssh-hosts-btn--small',
+              onClick: () => setPrompt(''),
+            }, t('file.cancel')))),
+        error !== '' && h('div', { className: 'dsh-ssh-hosts-editorError' }, error),
+        saveError !== '' && h('div', { className: 'dsh-ssh-hosts-editorError' }, saveError),
+        phase === 'loading' && h('div', { className: 'dsh-ssh-hosts-treeHint' }, t('file.loading')),
+        phase === 'ready' && h('textarea', {
+          className: 'dsh-ssh-hosts-editorArea',
+          ref: area,
+          value: content,
+          spellCheck: false,
+          wrap: 'off',
+          'aria-label': fileNameOf(path),
+          onChange: event => setContent(event.target.value),
+          onClick: syncCaret,
+          onKeyUp: syncCaret,
+          onSelect: syncCaret,
+          onKeyDown: onEditorKeyDown,
+        }),
+        h('div', { className: 'dsh-ssh-hosts-editorFoot' },
+          h('span', null, phase === 'ready' ? formatBytes(meta.size) : ''),
+          h('span', null, phase === 'ready' ? `${String(caret.line)}:${String(caret.column)}` : ''),
+          h('span', null, phase === 'ready' ? (meta.eol === 'crlf' ? 'CRLF' : 'LF') : ''),
+          meta.bom && phase === 'ready' ? h('span', null, 'BOM') : null,
+          saving ? h('span', { className: 'dsh-ssh-hosts-editorNotice' }, t('file.saving')) : null,
+          notice !== '' ? h('span', { className: 'dsh-ssh-hosts-editorNotice' }, notice) : null))
+    }
+
+    /**
+     * Render one level of the remote folder tree.
+     * @param {{entries: object[], basePath: string, depth: number, nodes: object, expanded: Set<string>, selected: string, onToggle: Function, onSelect: Function, onOpenFile: Function, t: Function}} props - branch props.
+     * @returns {object} React element.
+     */
+    function TreeBranch({ entries, basePath, depth, nodes, expanded, selected, onToggle, onSelect, onOpenFile, t }) {
+      return h(React.Fragment, null, entries.map(entry => {
+        const path = joinRemotePath(basePath, entry.name)
+        const isDirectory = entry.kind === 'directory'
+        const open = isDirectory && expanded.has(path)
+        const node = open ? nodes[path] : undefined
+        const isSelected = !isDirectory && selected === path
+        return h(React.Fragment, { key: path },
+          h('div', {
+            className: 'dsh-ssh-hosts-treeRow'
+              + (isDirectory ? ' dsh-ssh-hosts-treeRow--dir' : ' dsh-ssh-hosts-treeRow--file')
+              + (String(entry.name).startsWith('.') ? ' dsh-ssh-hosts-treeRow--hidden' : '')
+              + (isSelected ? ' dsh-ssh-hosts-treeRow--selected' : ''),
+            style: { paddingLeft: 6 + depth * 14 },
+            role: 'treeitem',
+            'aria-expanded': isDirectory ? open : undefined,
+            'aria-selected': isDirectory ? undefined : isSelected,
+            tabIndex: 0,
+            title: path,
+            onClick: isDirectory ? () => onToggle(path) : () => onSelect(path),
+            onDoubleClick: isDirectory ? undefined : () => onOpenFile(path),
+            onKeyDown: event => {
+              if (event.key !== 'Enter' && event.key !== ' ') return
+              event.preventDefault()
+              if (isDirectory) onToggle(path)
+              else onOpenFile(path)
+            },
+          },
+          h('span', {
+            className: `dsh-ssh-hosts-treeChevron${open ? ' dsh-ssh-hosts-treeChevron--open' : ''}`,
+            'aria-hidden': 'true',
+          }, isDirectory ? h(IconChevron, { size: 12 }) : null),
+          h('span', { className: 'dsh-ssh-hosts-treeIcon', 'aria-hidden': 'true' },
+            isDirectory
+              ? (open ? h(IconFolderOpen, { size: 14 }) : h(IconFolder, { size: 14 }))
+              : h(IconFile, { size: 14 })),
+          h('span', { className: 'dsh-ssh-hosts-treeName' }, entry.name)),
+          open && node?.phase === 'loading'
+            && h('div', { className: 'dsh-ssh-hosts-treeHint', style: { paddingLeft: 30 + depth * 14 } }, t('browser.loading')),
+          open && node?.phase === 'error'
+            && h('div', { className: 'dsh-ssh-hosts-treeError', style: { paddingLeft: 30 + depth * 14 } }, node.error),
+          open && node?.phase === 'ready' && (node.entries.length === 0
+            ? h('div', { className: 'dsh-ssh-hosts-treeHint', style: { paddingLeft: 30 + depth * 14 } }, t('browser.empty'))
+            : h(TreeBranch, {
+              entries: node.entries,
+              basePath: path,
+              depth: depth + 1,
+              nodes,
+              expanded,
+              selected,
+              onToggle,
+              onSelect,
+              onOpenFile,
+              t,
+            })))
+      }))
+    }
+
+    /**
+     * The right-hand remote folder panel for one host.
+     * @param {{host: object, t: Function, onClose: Function}} props - panel props.
+     * @returns {object} React element.
+     */
+    function FolderBrowser({ host, t, onClose }) {
+      const rootHint = typeof host.defaultWorkspace === 'string' && host.defaultWorkspace.trim() !== ''
+        ? host.defaultWorkspace.trim()
+        : '~'
+      const [state, setState] = React.useState({ phase: 'loading', path: rootHint, parent: '', entries: [], error: '', truncated: false })
+      const [nodes, setNodes] = React.useState({})
+      const [expanded, setExpanded] = React.useState(() => new Set())
+      const [selected, setSelected] = React.useState('')
+      const [openFile, setOpenFile] = React.useState(null)
+      const [reload, setReload] = React.useState(0)
+
+      const openRoot = React.useCallback(async path => {
+        setState(current => ({ ...current, phase: 'loading', error: '' }))
+        try {
+          const data = await api.tree(host.id, path)
+          setState({
+            phase: 'ready',
+            path: typeof data.path === 'string' && data.path !== '' ? data.path : path,
+            parent: typeof data.parent === 'string' ? data.parent : '',
+            entries: sortEntries(Array.isArray(data.entries) ? data.entries : []),
+            error: '',
+            truncated: data.truncated === true,
+          })
+          setNodes({})
+          setExpanded(new Set())
+        } catch (error) {
+          setState(current => ({ ...current, phase: 'error', path, error: browseErrorText(error, t) }))
+        }
+      }, [host.id, t])
+
+      React.useEffect(() => { void openRoot(rootHint) }, [openRoot, rootHint, reload])
+
+      const loadNode = React.useCallback(async path => {
+        setNodes(current => ({ ...current, [path]: { phase: 'loading', entries: [], error: '' } }))
+        try {
+          const data = await api.tree(host.id, path)
+          const entries = sortEntries(Array.isArray(data.entries) ? data.entries : [])
+          setNodes(current => ({ ...current, [path]: { phase: 'ready', entries, error: '' } }))
+        } catch (error) {
+          setNodes(current => ({
+            ...current,
+            [path]: { phase: 'error', entries: [], error: browseErrorText(error, t) },
+          }))
+        }
+      }, [host.id, t])
+
+      const toggle = path => {
+        if (expanded.has(path)) {
+          setExpanded(current => {
+            const next = new Set(current)
+            next.delete(path)
+            return next
+          })
+          return
+        }
+        setExpanded(current => {
+          const next = new Set(current)
+          next.add(path)
+          return next
+        })
+        if (nodes[path] === undefined || nodes[path].phase === 'error') void loadNode(path)
+      }
+
+      const total = state.entries.length
+
+      return h('aside', {
+        className: `dsh-ssh-hosts-browser${openFile === null ? '' : ' dsh-ssh-hosts-browser--editor'}`,
+        'aria-label': `${t('browser.title')}: ${host.name}`,
+      },
+        h('div', { className: 'dsh-ssh-hosts-browserHead' },
+          h('span', { className: 'dsh-ssh-hosts-treeIcon', 'aria-hidden': 'true' }, h(IconFolderOpen, { size: 16 })),
+          h('div', { className: 'dsh-ssh-hosts-browserTitle' },
+            h('span', { className: 'dsh-ssh-hosts-browserName', title: host.name }, host.name),
+            h('span', { className: 'dsh-ssh-hosts-browserKind' }, t('browser.title'))),
+          openFile === null && h('button', {
+            type: 'button',
+            className: 'dsh-ssh-hosts-icon-btn',
+            title: t('browser.close'),
+            'aria-label': t('browser.close'),
+            onClick: onClose,
+          }, h(IconClose, { size: 14 }))),
+        openFile !== null
+          ? h(FileEditor, {
+            host,
+            path: openFile,
+            t,
+            onBack: () => setOpenFile(null),
+          })
+          : h(React.Fragment, null,
+            h('div', { className: 'dsh-ssh-hosts-browserPath' },
+              h('button', {
+                type: 'button',
+                className: 'dsh-ssh-hosts-icon-btn',
+                title: t('browser.up'),
+                'aria-label': t('browser.up'),
+                disabled: state.phase === 'loading' || state.parent === '',
+                onClick: () => { void openRoot(state.parent === '' ? '/' : state.parent) },
+              }, h(IconUp, { size: 14 })),
+              h('button', {
+                type: 'button',
+                className: 'dsh-ssh-hosts-icon-btn',
+                title: t('browser.refresh'),
+                'aria-label': t('browser.refresh'),
+                disabled: state.phase === 'loading',
+                onClick: () => setReload(current => current + 1),
+              }, h(IconRefresh, { size: 14 })),
+              h('span', { className: 'dsh-ssh-hosts-pathText', title: state.path }, state.path)),
+            state.phase === 'loading' && h('div', { className: 'dsh-ssh-hosts-tree' },
+              h('div', { className: 'dsh-ssh-hosts-treeHint' }, t('browser.loading'))),
+            state.phase === 'error' && h('div', { className: 'dsh-ssh-hosts-tree' },
+              h('div', { className: 'dsh-ssh-hosts-treeError' }, state.error)),
+            state.phase === 'ready' && h('div', { className: 'dsh-ssh-hosts-tree', role: 'tree' },
+              total === 0
+                ? h('div', { className: 'dsh-ssh-hosts-treeHint' }, t('browser.empty'))
+                : h(TreeBranch, {
+                  entries: state.entries,
+                  basePath: state.path,
+                  depth: 0,
+                  nodes,
+                  expanded,
+                  selected,
+                  onToggle: toggle,
+                  onSelect: setSelected,
+                  onOpenFile: setOpenFile,
+                  t,
+                })),
+            h('div', { className: 'dsh-ssh-hosts-browserFoot' },
+              h('span', null, state.phase === 'ready'
+                ? (state.truncated ? t('browser.truncated', { count: String(total) }) : t('browser.count', { count: String(total) }))
+                : state.phase === 'loading' ? t('browser.loading') : t('browser.failed')))))
+    }
+
+    /**
+     * One list row.
+     * @param {{host: object, t: Function, busy: boolean, active: boolean, onConnect: Function, onBrowse: Function, onEdit: Function, onDelete: Function}} props - row props.
+     * @returns {object} React element.
+     */
+    function HostRow({ host, t, busy, active, onConnect, onBrowse, onEdit, onDelete }) {
       const status = host.status ?? { phase: 'unknown' }
       const phase = status.phase ?? 'unknown'
       const target = typeof host.host === 'string' && host.host.trim() !== '' ? targetText(host) : t('list.alias')
@@ -587,6 +1346,14 @@ window.__ModuleLoader__.load({
             disabled: busy,
             onClick: () => onConnect(host),
           }, busy ? t('action.connecting') : t('action.connect')),
+          h('button', {
+            type: 'button',
+            className: 'dsh-ssh-hosts-icon-btn',
+            title: t('action.browse'),
+            'aria-label': `${t('action.browse')}: ${host.name}`,
+            'aria-pressed': active,
+            onClick: () => onBrowse(host),
+          }, h(IconFolder, { size: 14 })),
           h('button', {
             type: 'button',
             className: 'dsh-ssh-hosts-icon-btn',
@@ -845,6 +1612,8 @@ window.__ModuleLoader__.load({
       const [deleteBusy, setDeleteBusy] = React.useState(false)
       const [importing, setImporting] = React.useState(null)
       const [notice, setNotice] = React.useState(null)
+      const [browsingId, setBrowsingId] = React.useState(null)
+      const browsingHost = hosts.find(host => host.id === browsingId) ?? null
 
       React.useEffect(() => {
         if (notice === null) return
@@ -943,6 +1712,7 @@ window.__ModuleLoader__.load({
           if (form.password !== '') payload.password = form.password
           if (form.passphrase !== '') payload.passphrase = form.passphrase
           const result = await api.save(payload)
+          const created = editing === null
           const saved = { ...result.host, status: runtimeStatus.get(result.host.id) ?? { phase: 'unknown' } }
           setHosts(current => {
             const index = current.findIndex(host => host.id === saved.id)
@@ -952,7 +1722,9 @@ window.__ModuleLoader__.load({
             return next
           })
           setView({ kind: 'list' })
-          setNotice({ tone: 'success', text: editing !== null ? t('notice.saved') : t('notice.added') })
+          setNotice({ tone: 'success', text: created ? t('notice.added') : t('notice.saved') })
+          // A newly added host opens its remote folders beside the list.
+          if (created) setBrowsingId(saved.id)
         } catch (error) {
           setFormError(saveErrorText(error, t))
         } finally {
@@ -967,6 +1739,7 @@ window.__ModuleLoader__.load({
           await api.remove(deleting.id)
           runtimeStatus.delete(deleting.id)
           setHosts(current => current.filter(host => host.id !== deleting.id))
+          if (browsingId === deleting.id) setBrowsingId(null)
           setDeleting(null)
           setNotice({ tone: 'success', text: t('notice.deleted') })
         } catch (error) {
@@ -1100,16 +1873,26 @@ window.__ModuleLoader__.load({
                 className: 'dsh-ssh-hosts-btn dsh-ssh-hosts-btn--primary',
                 onClick: openAdd,
               }, h(IconPlus, { size: 14 }), t('action.add')))),
-          phase === 'ready' && hosts.length > 0 && h('div', { className: 'dsh-ssh-hosts-card', role: 'list' },
-            hosts.map(host => h(HostRow, {
-              key: host.id,
-              host,
+          phase === 'ready' && hosts.length > 0 && h('div', { className: 'dsh-ssh-hosts-body' },
+            h('div', { className: 'dsh-ssh-hosts-list' },
+              h('div', { className: 'dsh-ssh-hosts-card', role: 'list' },
+                hosts.map(host => h(HostRow, {
+                  key: host.id,
+                  host,
+                  t,
+                  busy: busy[host.id] === true,
+                  active: host.id === browsingId,
+                  onConnect: connect,
+                  onBrowse: item => setBrowsingId(current => current === item.id ? null : item.id),
+                  onEdit: openEdit,
+                  onDelete: setDeleting,
+                })))),
+            browsingHost !== null && h(FolderBrowser, {
+              key: browsingHost.id,
+              host: browsingHost,
               t,
-              busy: busy[host.id] === true,
-              onConnect: connect,
-              onEdit: openEdit,
-              onDelete: setDeleting,
-            })))),
+              onClose: () => setBrowsingId(null),
+            }))),
         deleting !== null && h(DeleteDialog, {
           t,
           host: deleting,
